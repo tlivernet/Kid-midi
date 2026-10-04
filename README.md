@@ -27,70 +27,79 @@ Conseils tablette : luminosité au minimum, mode « Ne pas déranger », et **é
 (Paramètres → Sécurité → Épingler l'application) pour que les enfants ne puissent pas en sortir.
 Régler le volume max sur l'enceinte : l'appli a déjà un limiteur, mais c'est l'enceinte qui décide.
 
-## Première mise en route : apprendre les potards (une seule fois)
+## Comment on joue
 
-Les potards du MiniLab n'ont pas de numéro « officiel » côté MIDI : il faut dire à l'appli lequel est lequel.
+**La musique** — les pads allument et éteignent les instruments d'un morceau, comme un groupe de musiciens :
 
-1. Dans l'appli, **taper 5 fois vite sur l'écran** → le panneau parent s'affiche.
-2. **« Apprendre les potards (1 → 16) »**, puis tourner chaque potard un petit coup, dans l'ordre :
-   rangée du haut de gauche à droite, puis rangée du bas de gauche à droite. L'écran indique quel potard tourner,
-   les pads s'allument pour montrer la progression, un petit « ding » confirme chaque potard.
-3. Imprimer **`etiquettes.html`** et coller les icônes au-dessus des potards et des pads (même un enfant qui ne lit pas s'y retrouve).
-
-## Ce que fait chaque partie du MiniLab
-
-**Pads 1-8** : 💥 grosse caisse, 🥁 caisse claire, ✨ charleston, 👏 clap, 🦘 boing, 💧 goutte, 🚀 laser, 🔔 cloche.
-Chaque pad a sa couleur et flashe quand on tape.
-
-**Rangée du haut des potards = le son du clavier**
-
-| n° | Potard | Effet |
+| Pad | | Effet |
 |---|---|---|
-| 1 | 🎹 Instrument | piano, flûte, bulle, boîte à musique, robot, chat, espace. Fait entendre l'instrument choisi, les pads en montrent la couleur |
-| 2 | ☀️ Brillance | son étouffé ↔ brillant |
-| 3 | 🦆 Wah | son « qui siffle » |
-| 4 | 〰️ Vibrato | la note tremble |
-| 5 | 🐘 Octave | grave ↔ aigu |
-| 6 | ⏳ Notes longues | les notes traînent après qu'on lâche |
-| 7 | 🏔️ Écho | écho… écho… |
-| 8 | 🦇 Grotte | réverbe |
+| 1 | 🥁 Batterie | allumé rouge = joue, éteint = se tait |
+| 2 | 🪇 Percus | jaune — claps, shakers, bongos, cloches… |
+| 3 | 🎸 Basse | vert |
+| 4 | 🎹 Accords | bleu |
+| 5 | 🎵 Mélodie | blanc — la chanson |
+| 6 | ✨ Ambiance | cyan — nappe de violons, arpège… |
+| 7 | 🔀 Autre mélodie | passe à l'autre partie de la chanson (violet = A, bleu = B), à la mesure suivante |
+| 8 | ⏯️ Tout / rien | lance tout le morceau, ou coupe tout. Clignote vert quand c'est arrêté |
 
-**Rangée du bas = l'accompagnement**
+Chaque pad allumé clignote au rythme de son instrument. La 2ᵉ banque de pads fait exactement la même chose.
 
-| n° | Potard | Effet |
+**Les thèmes** (potard 9, ou **clic sur le potard 9** = thème suivant) : 9 chansons du domaine public, chacune dans un style.
+
+| Thème | Chanson | Style |
 |---|---|---|
-| 9 | 🥁 Rythme | tout à gauche = arrêt, puis 8 rythmes : boum-tchak, disco, hip-hop, reggae, valse, samba, marche, rigolo. Chaque rythme a sa **ligne de basse** et les pads clignotent en rythme |
-| 10 | 🐇 Vitesse | tempo (70 à 160 BPM) |
-| 11 | 🎸 Basse | volume de la basse (à gauche = pas de basse) |
-| 12 | 🔊 Batterie | volume du rythme |
-| 13 | 🎺 Gros son | 1 note → 2 octaves → accord octave + quinte |
-| 14 | 🪜 Arpège | les touches tenues se jouent une par une, en rythme (à fond = deux fois plus vite) |
-| 15 | 🐯 Grrr | distorsion |
-| 16 | 📢 Volume | volume général (ne descend pas sous 25 %, pour éviter « ça marche plus ! ») |
+| Pop soleil | Ah ! vous dirai-je, maman | pop piano-glockenspiel |
+| Reggae plage | Frère Jacques | reggae, steel drum |
+| Disco boule | Ode à la joie | disco, basse slap, cuivres |
+| Électro mystère | Dans l'antre du roi de la montagne | électro, cordes pizzicato |
+| Hip-hop cool | Au clair de la lune | hip-hop, piano Rhodes, vibraphone |
+| Fiesta latina | La cucaracha | latino, trompette, guitare, bongos |
+| Cow-boy | Dans la ferme de Mathurin | country, banjo, harmonica, tuba |
+| Grande fanfare | When the Saints Go Marching In | fanfare, cuivres, tuba |
+| Berceuse étoilée | Berceuse de Brahms | harpe, boîte à musique (pour le soir) |
+
+**Le clavier** joue par-dessus, toujours juste grâce à la « gamme magique » (do pentatonique, comme tous les thèmes).
+**Clic sur le potard 1** = instrument suivant : piano, piano électrique, marimba, guitare, trompette, flûte, violons,
+chorale, steel drum, bruitages (oiseau, téléphone, applaudissements, hélicoptère, vagues…).
+Les boutons *Octave − / +* du MiniLab changent l'octave du clavier (ils n'envoient rien à l'appli).
+
+Tous les sons sont de vrais instruments enregistrés (banque FluidR3 GM) et de vraies batteries.
+
+## Les potards
+
+| | Rangée du haut = le clavier | | Rangée du bas = la musique |
+|---|---|---|---|
+| 1 | 🎹 Instrument (clic = suivant) | 9 | 🎵 Thème (clic = suivant) |
+| 2 | 🔉 Volume du clavier | 10 | 🐇 Vitesse |
+| 3 | ☀️ Brillance | 11 | 🎶 Volume de la musique |
+| 4 | 🦆 Wah | 12 | 🥁 Volume de la batterie |
+| 5 | 〰️ Vibrato | 13 | 🎺 Gros son (octaves) |
+| 6 | ⏳ Notes longues | 14 | 🪜 Arpège (touches tenues jouées en rythme) |
+| 7 | 🏔️ Écho | 15 | 🐯 Grrr (distorsion) |
+| 8 | 🦇 Grotte (réverbe) | 16 | 📢 Volume général (jamais sous 25 %) |
 
 Quand on tourne un potard, les pads affichent une **jauge lumineuse** de sa couleur.
-L'appli reconnaît toute seule les potards absolus (0-127) et les trois modes relatifs d'Arturia : pas besoin de
-toucher à *MIDI Control Center*. Si un potard semble « coincé », taper 5 fois sur l'écran, le tourner, et regarder
-les lignes « CC … = … » des derniers messages reçus.
+Les bandes tactiles *pitch* et *mod* font glisser les notes et ajoutent du vibrato.
 
-Basse et rythmes sont en **do pentatonique**, comme la « gamme magique » du clavier : tout ce que l'enfant joue
-par-dessus sonne juste.
+### Première mise en route : apprendre les potards (une seule fois)
 
-**Autres commandes**
+1. Dans l'appli, **taper 5 fois vite sur l'écran** → panneau parent.
+2. **« Apprendre les potards »**, puis tourner chaque potard un petit coup, dans l'ordre : rangée du haut de gauche
+   à droite, puis rangée du bas. Ensuite **cliquer sur le potard 1, puis sur le potard 9**. L'écran guide, un « ding » confirme.
+3. Imprimer **`etiquettes.html`** et coller les icônes au-dessus des potards et des pads.
 
-- **Bandes tactiles** : *pitch* fait glisser la hauteur des notes, *mod* ajoute du vibrato. La pédale de sustain (optionnelle) fait tenir les notes.
-- **Pads 9-16** (bouton *Pad 9-16*) : choix de l'instrument (9-15) et gamme magique on/off (16).
-  Selon la configuration du MiniLab, cette 2ᵉ banque peut ne rien faire : le potard 1 fait la même chose.
-  Pour voir ce qu'elle envoie, ouvrir le panneau parent puis taper sur un pad : la liste
-  « Derniers messages reçus » l'affiche.
+L'appli reconnaît toute seule les potards absolus et les modes relatifs d'Arturia. Si quelque chose ne réagit pas,
+le panneau parent affiche les derniers messages MIDI reçus.
 
 ## Vie de l'appli
 
-- Après **45 s** sans jeu (et sans rythme), un chenillard de couleurs parcourt les pads pour inviter à jouer.
-- Après **10 min**, tout s'éteint (lumières, son, rythme, arpège). Toucher n'importe quoi réveille avec un petit carillon.
-- **5 tapes rapides sur l'écran** : panneau parent (appareils détectés, réglages, derniers messages MIDI, apprentissage des potards).
-- Pour tester sans MiniLab sur un ordinateur : touches `A W S E D F T G Y H U J K` (position QWERTY) = clavier,
-  `1`-`8` = pads (Maj + chiffre = pads 9-16).
+- Arrêtée et sans jeu pendant **45 s** : chenillard de couleurs pour inviter à jouer.
+- Après **10 min** sans jeu : tout s'éteint (musique, lumières). Toucher n'importe quoi réveille avec un petit carillon.
+- **Panneau parent** (5 tapes sur l'écran) : appareils détectés, thème et couches en cours, derniers messages MIDI,
+  boutons « Apprendre les potards », « Gamme magique » on/off, « Test son ».
+- Hors-ligne : après la première utilisation avec Internet, tous les sons sont gardés sur la tablette.
+- Pour tester sans MiniLab sur un ordinateur : `A W S E D F T G Y H U J K` = clavier, `1`-`8` = pads,
+  `N` = instrument suivant, `M` = thème suivant.
 
 ## Si le son grésille
 
@@ -99,15 +108,22 @@ L'appli garde de la marge (le son sort volontairement un peu moins fort) : **mon
 - **Grésillement quand on joue beaucoup** : volume de la tablette vers 70-80 %, volume de l'enceinte plus haut.
   Une sortie casque de tablette poussée à fond sature souvent l'entrée AUX d'une chaîne hi-fi.
 - **Craquements irréguliers** : la tablette n'arrive pas à suivre. Fermer les autres applis, éviter le mode économie d'énergie.
-  Dans `index.html`, `LATENCY = 'playback'` donne encore plus de marge (un peu plus de délai entre la touche et le son).
+  Dans `js/app.js`, `LATENCY = 'playback'` donne encore plus de marge (un peu plus de délai entre la touche et le son).
 - **Bourdonnement ou souffle permanent, même sans jouer** : souvent une boucle de masse (tablette en charge + MiniLab
   en USB + câble vers la hi-fi). Essayer tablette sur batterie, une autre prise, ou un isolateur jack (« ground loop isolator », ~10 €).
 - **Ça grésille seulement avec le potard 🐯 Grrr** : c'est normal, c'est la distorsion.
 
 ## Personnalisation
 
-Tout est dans `index.html` (un seul fichier, sans dépendance) : constantes en haut (canal des pads, délais de veille, volume),
-listes `INSTRUMENTS`, `DRUMS`, `GROOVES` (rythmes et basses, faciles à écrire : numéros de pas sur 16) et `PARAMS` (potards).
+- `js/themes.js` : les thèmes, écrits dans une notation simple (rythmes en `x...x...`, mélodies en `C5:4 E5:2`,
+  accords en `Am:16`). Le fichier explique la notation en en-tête ; ajouter une chanson = ajouter un bloc.
+- `js/app.js` : le moteur (constantes en haut : canal des pads, veille, volume).
+- `tools/build_sounds.py` : refabrique le dossier `sounds/` (ajouter un instrument General MIDI = une ligne).
 
-Si les pads jouent des notes au lieu des bruitages, vérifier dans *Arturia MIDI Control Center* que les pads envoient
-les notes 36-51 sur le canal 10 (réglage d'usine), ou adapter `PAD_CHANNEL` / `PAD_FIRST_NOTE`.
+## Crédits des sons
+
+- Instruments : banque **FluidR3 GM** de Frank Wen (licence CC-BY 3.0), version rendue par
+  [gleitz/midi-js-soundfonts](https://github.com/gleitz/midi-js-soundfonts).
+- Batteries : [web-audio-samples](https://github.com/cwilso/web-audio-samples) de Chris Wilson (Apache 2.0),
+  via [Tonejs/audio](https://github.com/Tonejs/audio).
+- Mélodies : chansons traditionnelles et œuvres du domaine public (Mozart/trad., Beethoven, Grieg, Brahms…).

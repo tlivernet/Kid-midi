@@ -24,29 +24,25 @@
 <body>
 <h1>Étiquettes Kid MIDI</h1>
 <p>À imprimer, découper et coller au-dessus des potards et des pads du MiniLab (gommettes ou ruban adhésif).
-   Les potards doivent avoir été appris dans l'ordre 1 → 16 (5 tapes sur l'écran de l'appli → « Apprendre les potards »).</p>
+   Les potards doivent avoir été appris une fois (5 tapes sur l'écran de l'appli → « Apprendre les potards »).</p>
 
-<h2>Potards — rangée du haut (le son du clavier)</h2>
+<h2>Potards — rangée du haut (le clavier)</h2>
 <div class="row" id="top"></div>
-<h2>Potards — rangée du bas (l'accompagnement)</h2>
+<h2>Potards — rangée du bas (la musique)</h2>
 <div class="row" id="bottom"></div>
-<h2>Pads 1-8</h2>
+<h2>Pads</h2>
 <div class="row" id="pads"></div>
-<h2>Pads 9-16 (bouton « Pad 9-16 »)</h2>
-<div class="row" id="pads2"></div>
 <button onclick="print()">Imprimer</button>
 
 <script>
 const knobs = [
-  ['🎹', 'Instrument'], ['☀️', 'Brillance'], ['🦆', 'Wah'], ['〰️', 'Vibrato'],
-  ['🐘', 'Octave'], ['⏳', 'Notes longues'], ['🏔️', 'Écho'], ['🦇', 'Grotte'],
-  ['🥁', 'Rythme'], ['🐇', 'Vitesse'], ['🎸', 'Basse'], ['🔊', 'Batterie'],
+  ['🎹', 'Instrument (clic = suivant)'], ['🔉', 'Volume clavier'], ['☀️', 'Brillance'], ['🦆', 'Wah'],
+  ['〰️', 'Vibrato'], ['⏳', 'Notes longues'], ['🏔️', 'Écho'], ['🦇', 'Grotte'],
+  ['🎵', 'Thème (clic = suivant)'], ['🐇', 'Vitesse'], ['🎶', 'Volume musique'], ['🥁', 'Volume batterie'],
   ['🎺', 'Gros son'], ['🪜', 'Arpège'], ['🐯', 'Grrr'], ['📢', 'Volume'],
 ];
-const pads = [['💥', 'Boum'], ['🥁', 'Tchak'], ['✨', 'Tss'], ['👏', 'Clap'],
-              ['🦘', 'Boing'], ['💧', 'Goutte'], ['🚀', 'Laser'], ['🔔', 'Cloche']];
-const pads2 = [['🎹', 'Piano'], ['🪈', 'Flûte'], ['🫧', 'Bulle'], ['🎠', 'Boîte à musique'],
-               ['🤖', 'Robot'], ['🐱', 'Chat'], ['🛸', 'Espace'], ['🌈', 'Gamme magique']];
+const pads = [['🥁', 'Batterie'], ['🪇', 'Percus'], ['🎸', 'Basse'], ['🎹', 'Accords'],
+              ['🎵', 'Mélodie'], ['✨', 'Ambiance'], ['🔀', 'Autre mélodie'], ['⏯️', 'Tout / rien']];
 const fill = (id, list, cls, offset) => {
   document.getElementById(id).innerHTML = list.map(([e, t], i) =>
     `<div class="k ${cls}"><span class="n">${i + offset}</span><b>${e}</b><span>${t}</span></div>`).join('');
@@ -54,7 +50,6 @@ const fill = (id, list, cls, offset) => {
 fill('top', knobs.slice(0, 8), '', 1);
 fill('bottom', knobs.slice(8), '', 9);
 fill('pads', pads, 'pad', 1);
-fill('pads2', pads2, 'pad', 9);
 </script>
 </body>
 </html>
