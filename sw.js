@@ -1,5 +1,5 @@
 // Cache hors-ligne : l'appli fonctionne sans Internet une fois ouverte une première fois.
-const CACHE = 'kidmidi-v2';
+const CACHE = 'kidmidi-v3';
 const FILES = ['./', 'index.html', 'manifest.webmanifest', 'icon.svg', 'etiquettes.html'];
 self.addEventListener('install', e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES))));
 self.addEventListener('activate', e => e.waitUntil(

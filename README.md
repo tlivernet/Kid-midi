@@ -89,6 +89,18 @@ par-dessus sonne juste.
 - Pour tester sans MiniLab sur un ordinateur : touches `A W S E D F T G Y H U J K` (position QWERTY) = clavier,
   `1`-`8` = pads (Maj + chiffre = pads 9-16).
 
+## Si le son grésille
+
+L'appli garde de la marge (le son sort volontairement un peu moins fort) : **monter le volume sur l'enceinte plutôt que sur la tablette**.
+
+- **Grésillement quand on joue beaucoup** : volume de la tablette vers 70-80 %, volume de l'enceinte plus haut.
+  Une sortie casque de tablette poussée à fond sature souvent l'entrée AUX d'une chaîne hi-fi.
+- **Craquements irréguliers** : la tablette n'arrive pas à suivre. Fermer les autres applis, éviter le mode économie d'énergie.
+  Dans `index.html`, `LATENCY = 'playback'` donne encore plus de marge (un peu plus de délai entre la touche et le son).
+- **Bourdonnement ou souffle permanent, même sans jouer** : souvent une boucle de masse (tablette en charge + MiniLab
+  en USB + câble vers la hi-fi). Essayer tablette sur batterie, une autre prise, ou un isolateur jack (« ground loop isolator », ~10 €).
+- **Ça grésille seulement avec le potard 🐯 Grrr** : c'est normal, c'est la distorsion.
+
 ## Personnalisation
 
 Tout est dans `index.html` (un seul fichier, sans dépendance) : constantes en haut (canal des pads, délais de veille, volume),

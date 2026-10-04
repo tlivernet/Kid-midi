@@ -34,7 +34,8 @@
 // ─── Réglages ────────────────────────────────────────────────────────────────
 const PAD_CHANNEL = 9;          // canal 10 (0-indexé) : canal d'usine des pads du MiniLab mkII
 const PAD_FIRST_NOTE = 36;      // pads 1-8 → notes 36-43, pads 9-16 → notes 44-51
-const MAX_VOICES = 12;          // limite pour quand on tape avec les deux mains
+const MAX_VOICES = 8;           // limite pour quand on tape avec les deux mains (et pour ménager la tablette)
+const LATENCY = 'balanced';     // 'interactive' = plus réactif mais peut grésiller sur une petite tablette
 const MASTER_LEVEL = 0.8;
 const ATTRACT_AFTER_MS = 45 * 1000;    // chenillard lumineux après 45 s sans jeu
 const SLEEP_AFTER_MS = 10 * 60 * 1000; // dodo (lumières éteintes, son en pause) après 10 min
@@ -170,21 +171,31 @@ function applyParams() {
   const grr = Math.round(v[P.GRR] * 20);
   if (grr !== lastGrr) {
     lastGrr = grr;
-    const k = grr * 2.5, curve = new Float32Array(1024);
-    for (let i = 0; i < curve.length; i++) { const x = i / 511.5 - 1; curve[i] = (1 + k) * x / (1 + k * Math.abs(x)); }
-    shaper.curve = curve;
+    if (grr === 0) { shaper.curve = null; shaper.oversample = 'none'; } // désactivée = pas de calcul
+    else {
+      const k = grr * 2.5, curve = new Float32Array(1024);
+      for (let i = 0; i < curve.length; i++) { const x = i / 511.5 - 1; curve[i] = (1 + k) * x / (1 + k * Math.abs(x)); }
+      shaper.curve = curve; shaper.oversample = '2x';
+    }
   }
 }
 
 // ─── Moteur audio ────────────────────────────────────────────────────────────
 function initAudio() {
-  ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+  ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: LATENCY });
 
+  // Sortie : compresseur → atténuation (le compresseur de Chrome remonte tout seul le niveau)
+  // → écrêtage doux de sécurité. On garde de la marge : c'est l'enceinte qui donne le volume.
   const limiter = ctx.createDynamicsCompressor();
-  limiter.threshold.value = -10; limiter.knee.value = 6; limiter.ratio.value = 12;
-  limiter.attack.value = 0.003; limiter.release.value = 0.25;
+  limiter.threshold.value = -18; limiter.knee.value = 6; limiter.ratio.value = 12;
+  limiter.attack.value = 0.002; limiter.release.value = 0.2;
+  const trim = ctx.createGain(); trim.gain.value = 0.5;
+  const safety = ctx.createWaveShaper();
+  const sc = new Float32Array(1024);
+  for (let i = 0; i < sc.length; i++) sc[i] = Math.tanh(1.5 * (i / 511.5 - 1)) / Math.tanh(1.5);
+  safety.curve = sc;
   master = ctx.createGain();
-  master.connect(limiter).connect(ctx.destination);
+  master.connect(limiter).connect(trim).connect(safety).connect(ctx.destination);
 
   const mix = ctx.createGain();
   mix.connect(master);
@@ -200,7 +211,7 @@ function initAudio() {
 
   // Réverbe « grotte » (réponse impulsionnelle générée)
   const conv = ctx.createConvolver();
-  const len = Math.floor(ctx.sampleRate * 2.8), ir = ctx.createBuffer(2, len, ctx.sampleRate);
+  const len = Math.floor(ctx.sampleRate * 1.8), ir = ctx.createBuffer(2, len, ctx.sampleRate);
   for (let c = 0; c < 2; c++) {
     const d = ir.getChannelData(c);
     for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
@@ -210,7 +221,7 @@ function initAudio() {
   mix.connect(revSend).connect(conv).connect(master);
 
   // Clavier → distorsion « Grrr » → filtre global ; percussions, rythme et basse directement dans le mix
-  shaper = ctx.createWaveShaper(); shaper.oversample = '2x';
+  shaper = ctx.createWaveShaper();
   filter = ctx.createBiquadFilter(); filter.type = 'lowpass';
   synthIn = ctx.createGain();
   synthIn.connect(shaper).connect(filter).connect(mix);
@@ -303,7 +314,7 @@ function releaseVoice(v, rel) {
   if (g.cancelAndHoldAtTime) g.cancelAndHoldAtTime(t);
   else { g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); }
   g.setTargetAtTime(0, t, rel / 4);
-  stopVoiceAt(v, t + rel + 0.05);
+  stopVoiceAt(v, t + rel * 1.5 + 0.05);
 }
 
 // « Gamme magique » : on ramène chaque touche sur la pentatonique de do → impossible de jouer faux
