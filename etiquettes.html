@@ -38,11 +38,11 @@
 const knobs = [
   ['🎹', 'Instrument (clic = suivant)'], ['🔉', 'Volume clavier'], ['☀️', 'Brillance'], ['🦆', 'Wah'],
   ['〰️', 'Vibrato'], ['⏳', 'Notes longues'], ['🏔️', 'Écho'], ['🦇', 'Grotte'],
-  ['🎵', 'Thème (clic = suivant)'], ['🐇', 'Vitesse'], ['🎶', 'Volume musique'], ['🥁', 'Volume batterie'],
+  ['🎵', 'Thème (clic = autre mélodie)'], ['🐇', 'Vitesse'], ['🎶', 'Volume musique'], ['🥁', 'Volume batterie'],
   ['🎺', 'Gros son'], ['🪜', 'Arpège'], ['🐯', 'Grrr'], ['📢', 'Volume'],
 ];
 const pads = [['🥁', 'Batterie'], ['🪇', 'Percus'], ['🎸', 'Basse'], ['🎹', 'Accords'],
-              ['🎵', 'Mélodie'], ['✨', 'Ambiance'], ['🔀', 'Autre mélodie'], ['⏯️', 'Tout / rien']];
+              ['🎵', 'Mélodie'], ['✨', 'Ambiance'], ['🌈', 'Tonalité'], ['⏯️', 'Tout / rien']];
 const fill = (id, list, cls, offset) => {
   document.getElementById(id).innerHTML = list.map(([e, t], i) =>
     `<div class="k ${cls}"><span class="n">${i + offset}</span><b>${e}</b><span>${t}</span></div>`).join('');

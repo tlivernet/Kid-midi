@@ -39,12 +39,13 @@ Régler le volume max sur l'enceinte : l'appli a déjà un limiteur, mais c'est 
 | 4 | 🎹 Accords | bleu |
 | 5 | 🎵 Mélodie | blanc — la chanson |
 | 6 | ✨ Ambiance | cyan — nappe de violons, arpège… |
-| 7 | 🔀 Autre mélodie | passe à l'autre partie de la chanson (violet = A, bleu = B), à la mesure suivante |
+| 7 | 🌈 Tonalité | monte la musique d'un cran (do → ré → mi → fa → sol → la → do…), à la mesure suivante. Une couleur par tonalité ; le clavier suit (gamme magique) |
 | 8 | ⏯️ Tout / rien | lance tout le morceau, ou coupe tout. Clignote vert quand c'est arrêté |
 
 Chaque pad allumé clignote au rythme de son instrument. La 2ᵉ banque de pads fait exactement la même chose.
 
-**Les thèmes** (potard 9, ou **clic sur le potard 9** = thème suivant) : 9 chansons du domaine public, chacune dans un style.
+**Les thèmes** (tourner le potard 9) : 9 chansons du domaine public, chacune dans un style.
+**Clic sur le potard 9** = autre mélodie (passe à l'autre partie de la chanson, à la mesure suivante).
 
 | Thème | Chanson | Style |
 |---|---|---|
@@ -61,7 +62,8 @@ Chaque pad allumé clignote au rythme de son instrument. La 2ᵉ banque de pads 
 **Le clavier** joue par-dessus, toujours juste grâce à la « gamme magique » (do pentatonique, comme tous les thèmes).
 **Clic sur le potard 1** = instrument suivant : piano, piano électrique, marimba, guitare, trompette, flûte, violons,
 chorale, steel drum, bruitages (oiseau, téléphone, applaudissements, hélicoptère, vagues…).
-Les boutons *Octave − / +* du MiniLab changent l'octave du clavier (ils n'envoient rien à l'appli).
+Les boutons *Octave − / +* du MiniLab changent l'octave du clavier. Sur le MiniLab mkII ils n'envoient a priori rien
+à l'appli ; s'ils envoient quelque chose, l'apprentissage guidé les utilise pour changer la tonalité (− / +).
 
 Tous les sons sont de vrais instruments enregistrés (banque FluidR3 GM) et de vraies batteries.
 
@@ -69,7 +71,7 @@ Tous les sons sont de vrais instruments enregistrés (banque FluidR3 GM) et de v
 
 | | Rangée du haut = le clavier | | Rangée du bas = la musique |
 |---|---|---|---|
-| 1 | 🎹 Instrument (clic = suivant) | 9 | 🎵 Thème (clic = suivant) |
+| 1 | 🎹 Instrument (clic = suivant) | 9 | 🎵 Thème (clic = autre mélodie) |
 | 2 | 🔉 Volume du clavier | 10 | 🐇 Vitesse |
 | 3 | ☀️ Brillance | 11 | 🎶 Volume de la musique |
 | 4 | 🦆 Wah | 12 | 🥁 Volume de la batterie |
@@ -85,7 +87,8 @@ Les bandes tactiles *pitch* et *mod* font glisser les notes et ajoutent du vibra
 
 1. Dans l'appli, **taper 5 fois vite sur l'écran** → panneau parent.
 2. **« Apprendre les potards »**, puis tourner chaque potard un petit coup, dans l'ordre : rangée du haut de gauche
-   à droite, puis rangée du bas. Ensuite **cliquer sur le potard 1, puis sur le potard 9**. L'écran guide, un « ding » confirme.
+   à droite, puis rangée du bas. Ensuite **cliquer sur le potard 1, puis sur le potard 9**, puis appuyer sur
+   **Octave −** et **Octave +** (s'il ne se passe rien, toucher l'écran pour passer). L'écran guide, un « ding » confirme.
 3. Imprimer **`etiquettes.html`** et coller les icônes au-dessus des potards et des pads.
 
 L'appli reconnaît toute seule les potards absolus et les modes relatifs d'Arturia. Si quelque chose ne réagit pas,
@@ -99,7 +102,7 @@ le panneau parent affiche les derniers messages MIDI reçus.
   boutons « Apprendre les potards », « Gamme magique » on/off, « Test son ».
 - Hors-ligne : après la première utilisation avec Internet, tous les sons sont gardés sur la tablette.
 - Pour tester sans MiniLab sur un ordinateur : `A W S E D F T G Y H U J K` = clavier, `1`-`8` = pads,
-  `N` = instrument suivant, `M` = thème suivant.
+  `N` = instrument suivant, `M` = autre mélodie, `,` / `.` = tonalité − / +.
 
 ## Si le son grésille
 

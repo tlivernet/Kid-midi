@@ -8,12 +8,14 @@ const LATENCY = 'balanced';     // 'interactive' = plus réactif mais peut grés
 const MASTER_LEVEL = 0.8;
 const ATTRACT_AFTER_MS = 45 * 1000;    // chenillard lumineux après 45 s sans jeu
 const SLEEP_AFTER_MS = 10 * 60 * 1000; // dodo (lumières éteintes, son en pause) après 10 min
-const DEFAULT_CLICKS = { '0:113': 'instr', '0:115': 'theme' }; // clics des potards 1 et 9 (réglage d'usine supposé)
+const DEFAULT_CLICKS = { '0:113': 'instr', '0:115': 'melody' }; // clics des potards 1 et 9 (réglage d'usine supposé)
 
 // Couleurs des pads du MiniLab mkII (codes SysEx)
 const C = { off: 0x00, red: 0x01, green: 0x04, yellow: 0x05, blue: 0x10, magenta: 0x11, cyan: 0x14, white: 0x7f };
 const RAINBOW = [C.red, C.yellow, C.green, C.cyan, C.blue, C.magenta, C.white];
-const PAD_VARIATION = 6, PAD_PLAY = 7;
+const PAD_KEY = 6, PAD_PLAY = 7;
+// Tonalités proposées (en demi-tons au-dessus de do) : do, ré, mi, fa, sol, la
+const KEYS = [0, 2, 4, 5, 7, -3], KEY_NAMES = ['do', 'ré', 'mi', 'fa', 'sol', 'la'];
 
 const store = {
   get(k, d) { try { const v = localStorage.getItem('kidmidi.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -54,7 +56,8 @@ setSel(P.INSTR, instr);
 setSel(P.THEME, themeIdx);
 let magic = store.get('magic', true);    // « gamme magique » : tout sonne juste
 let knobMap = store.get('knobs16', {});  // "canal:cc" → numéro de potard 0-15
-let clickMap = store.get('clicks', DEFAULT_CLICKS); // "canal:cc" → 'instr' | 'theme'
+let clickMap = store.get('clicks', DEFAULT_CLICKS); // "canal:cc" → 'instr' | 'melody' | 'keyDown' | 'keyUp'
+for (const k in clickMap) if (clickMap[k] === 'theme') clickMap[k] = 'melody'; // ancien réglage : le clic 9 changeait de thème
 const knobMode = {};                     // "canal:cc" → { mode, sure, last } (auto-détection, voir knobDelta)
 const clickState = {};
 let learn = null;                        // { next, seen } pendant l'apprentissage guidé
@@ -249,9 +252,10 @@ function releaseVoice(v, rel) {
 // « Gamme magique » : on ramène chaque touche sur la pentatonique de do → impossible de jouer faux
 const PENTA = [0, 0, 2, 2, 4, 4, 7, 7, 7, 9, 9, 12];
 const snap = n => n - (n % 12) + PENTA[n % 12];
+const keyPc = () => ((KEYS[seq.key] % 12) + 12) % 12;
 
 function voicedNotes(note) {
-  const n = Math.max(24, Math.min(108, magic ? snap(note) : note));
+  const k = keyPc(), n = Math.max(24, Math.min(108, magic ? snap(note + 12 - k) - 12 + k : note));
   return [[n], [n, n + 12], [n, n + 12, n + 19]][selIndex(P.FAT)];
 }
 
@@ -438,7 +442,8 @@ function themeBanks(th) {
 
 const layersOn = [false, false, false, false, false, false];
 const LAYER_GAIN = { bass: 1, chords: 1.8, melody: 2, ambiance: 1.4 }; // équilibre mesuré entre couches
-const seq = { running: false, step: 0, partStep: 0, part: 0, pendingPart: null, next: 0 };
+const seq = { running: false, step: 0, partStep: 0, part: 0, pendingPart: null, key: 0, pendingKey: null, next: 0 };
+const transposed = c => ({ root: (c.root + KEYS[seq.key] + 12) % 12, iv: c.iv });
 const theme = () => THEMES[themeIdx];
 
 function setTheme(i, fromKnob) {
@@ -462,6 +467,7 @@ function startClock() {
   seq.running = true;
   seq.step = 0; seq.partStep = 0;
   if (seq.pendingPart !== null) { seq.part = seq.pendingPart; seq.pendingPart = null; }
+  if (seq.pendingKey !== null) { seq.key = seq.pendingKey; seq.pendingKey = null; }
   seq.next = ctx.currentTime + 0.08;
 }
 
@@ -482,6 +488,18 @@ function toggleVariation() {
   else { seq.part = nxt; seq.pendingPart = null; seq.partStep = 0; }
 }
 
+// Change de tonalité (pad 7 ou boutons Octave s'ils envoient quelque chose)
+function changeKey(dir) {
+  const cur = seq.pendingKey ?? seq.key;
+  const nxt = (cur + dir + KEYS.length) % KEYS.length;
+  if (seq.running && layersOn.some(Boolean)) seq.pendingKey = nxt;     // changera à la prochaine mesure
+  else {
+    seq.key = nxt; seq.pendingKey = null;
+    loadBank('glockenspiel').then(() => [0, 4, 7].forEach((iv, k) =>   // petit accord dans la nouvelle tonalité
+      playSample('glockenspiel', 72 + KEYS[nxt] + iv, 90, ctx.currentTime + k * 0.08, kidVol, { level: 0.5, dur: 0.4 })));
+  }
+}
+
 function flashLater(i, ms, color = C.white) {
   setTimeout(() => flash(i, color, 90), ms);
 }
@@ -489,7 +507,7 @@ function flashLater(i, ms, color = C.white) {
 function playStep(th, t, ms, stepDur) {
   const part = th.parsedParts[seq.part];
   const ps = seq.partStep % part.len, bp = ps % th.bar;
-  const chord = part.chordAt[ps];
+  const chord = transposed(part.chordAt[ps]);
   const S = (i) => layersOn[i];
 
   if (S(0)) for (const [v, pat] of Object.entries(th.drumPats)) {
@@ -513,7 +531,7 @@ function playStep(th, t, ms, stepDur) {
   if (S(4)) {
     const e = part.melAt[ps];
     if (e) {
-      playSample(th.melody.inst, e.note, 110, t, musicBus,
+      playSample(th.melody.inst, e.note + KEYS[seq.key], 110, t, musicBus,
         { level: (th.melody.level ?? 0.6) * LAYER_GAIN.melody, dur: e.dur * stepDur * 0.92, release: 0.15 });
       flashLater(4, ms, hitColor(4));
     }
@@ -525,7 +543,7 @@ function playHarmony(L, layer, gainMul, part, ps, bp, chord, t, ms, stepDur) {
   if (L.mode === 'pad') {
     const s = part.chordStart[ps];
     if (!s) return;
-    for (const n of voicing(s.chord, L.low)) playSample(L.inst, n, 90, t, musicBus,
+    for (const n of voicing(transposed(s.chord), L.low)) playSample(L.inst, n, 90, t, musicBus,
       { level: lvl, dur: s.dur * stepDur, release: 0.4, attack: 0.08 });
     flashLater(layer, ms, hitColor(layer));
   } else if (L.mode === 'arp') {
@@ -563,6 +581,7 @@ function seqTick() {
     if (seq.pendingPart !== null && seq.partStep % th.bar === 0) {
       seq.part = seq.pendingPart; seq.pendingPart = null; seq.partStep = 0;
     }
+    if (seq.pendingKey !== null && seq.partStep % th.bar === 0) { seq.key = seq.pendingKey; seq.pendingKey = null; }
     const swing = (seq.step % 2) ? (th.swing || 0) * stepDur : 0;
     const t = seq.next + swing, ms = Math.max(0, (t - ctx.currentTime) * 1000);
     if (music) playStep(th, t, ms, stepDur);
@@ -610,10 +629,9 @@ function padColor(i, now) {
   }
   let c;
   if (i < LAYERS.length) c = layersOn[i] ? layerColor(i) : C.off;
-  else if (i === PAD_VARIATION) {
-    const part = seq.pendingPart ?? seq.part;
-    c = part === 0 ? C.magenta : C.blue;
-    if (seq.pendingPart !== null && blink) c = C.off;              // clignote jusqu'à la mesure suivante
+  else if (i === PAD_KEY) {
+    c = RAINBOW[seq.pendingKey ?? seq.key];                         // une couleur par tonalité
+    if (seq.pendingKey !== null && blink) c = C.off;               // clignote jusqu'à la mesure suivante
   } else c = playing ? C.green : (blink ? C.green : C.off);         // lecture : vert ; arrêt : vert qui clignote
   const f = led.flash[i];
   if (f && f.until > now) c = f.color;
@@ -630,7 +648,7 @@ function renderLeds() {
 
 function padOn(i) {
   if (i < LAYERS.length) toggleLayer(i);
-  else if (i === PAD_VARIATION) toggleVariation();
+  else if (i === PAD_KEY) changeKey(+1);
   else togglePlay();
 }
 
@@ -674,18 +692,28 @@ function onKnob(key, value) {
   applyParams();
 }
 
-// Clic d'un potard (1 = instrument suivant, 9 = thème suivant). Accepte boutons momentanés et bascules.
+// Boutons : clic potard 1 = instrument suivant, clic potard 9 = autre mélodie, Octave −/+ = tonalité
+// (si le MiniLab les envoie). Accepte boutons momentanés et bascules.
 function onClick(key, value) {
   const s = clickState[key] || (clickState[key] = { at: 0 });
   const now = performance.now();
   if (value < 64 && now - s.at < 1000) return;  // relâchement juste après l'appui
   s.at = now;
-  if (clickMap[key] === 'instr') selectInstrument(instr + 1);
-  else setTheme(themeIdx + 1);
+  const action = clickMap[key];
+  if (action === 'instr') selectInstrument(instr + 1);
+  else if (action === 'melody') toggleVariation();
+  else if (action === 'keyDown') changeKey(-1);
+  else if (action === 'keyUp') changeKey(+1);
 }
 
-// Apprentissage guidé : 16 potards dans l'ordre, puis les clics des potards 1 et 9
-const LEARN_STEPS = PARAMS.length + 2;
+// Apprentissage guidé : 16 potards dans l'ordre, les clics des potards 1 et 9, puis Octave − et +
+const LEARN_BUTTONS = [
+  { action: 'instr',   text: 'Clique (appuie) sur le potard n°1', what: '🎹 Instrument suivant' },
+  { action: 'melody',  text: 'Clique (appuie) sur le potard n°9', what: '🔀 Autre mélodie' },
+  { action: 'keyDown', text: 'Appuie sur le bouton Octave −',     what: '🎼 Tonalité plus grave\n(si rien ne se passe : ce bouton n\'envoie rien, touche l\'écran)' },
+  { action: 'keyUp',   text: 'Appuie sur le bouton Octave +',     what: '🎼 Tonalité plus aiguë\n(si rien ne se passe : touche l\'écran)' },
+];
+const LEARN_STEPS = PARAMS.length + LEARN_BUTTONS.length;
 function startLearn() {
   learn = { next: 0, seen: new Set() };
   knobMap = {}; clickMap = {};
@@ -694,13 +722,17 @@ function startLearn() {
 }
 function learnMessage(key, value) {
   if (learn.seen.has(key)) return;
-  if (learn.next < PARAMS.length) knobMap[key] = learn.next;
-  else if (value >= 64) clickMap[key] = learn.next === PARAMS.length ? 'instr' : 'theme';
+  const b = LEARN_BUTTONS[learn.next - PARAMS.length];
+  if (!b) knobMap[key] = learn.next;
+  else if (value >= 64 || b.action.startsWith('key')) clickMap[key] = b.action;
   else return;
   learn.seen.add(key);
-  learn.next++;
   store.set('knobs16', knobMap); store.set('clicks', clickMap);
   loadBank('glockenspiel').then(() => playSample('glockenspiel', 72 + PENTA[learn ? learn.next % 12 : 0], 90, ctx.currentTime, kidIn, { dur: 0.3 }));
+  nextLearnStep();
+}
+function nextLearnStep() {
+  learn.next++;
   if (learn.next >= LEARN_STEPS) stopLearn(); else updateLearnBox();
 }
 function stopLearn() {
@@ -714,10 +746,10 @@ function updateLearnBox() {
   if (n < PARAMS.length) {
     const p = PARAMS[n];
     box.textContent = `Tourne le potard n°${n + 1}\n(${n < 8 ? 'rangée du haut' : 'rangée du bas'}, ` +
-      `${n % 8 ? (n % 8 + 1) + 'ᵉ' : '1ᵉʳ'} en partant de la gauche)\n\n${p.icon} ${p.name}\n\nToucher l'écran pour arrêter`;
+      `${n % 8 ? (n % 8 + 1) + 'ᵉ' : '1ᵉʳ'} en partant de la gauche)\n\n${p.icon} ${p.name}\n\nToucher l'écran pour passer`;
   } else {
-    box.textContent = `Clique (appuie) sur le potard n°${n === PARAMS.length ? 1 : 9}\n\n` +
-      `${n === PARAMS.length ? '🎹 Instrument suivant' : '🎵 Thème suivant'}\n\nToucher l'écran pour arrêter`;
+    const b = LEARN_BUTTONS[n - PARAMS.length];
+    box.textContent = `${b.text}\n\n${b.what}\n\nToucher l'écran pour passer`;
   }
   box.style.display = 'flex';
 }
@@ -726,7 +758,7 @@ function updateLearnBox() {
 function logMsg(st, d1, d2) {
   const ch = (st & 0x0F) + 1, ty = st & 0xF0;
   if (ty === 0x80 || (ty === 0x90 && d2 === 0)) return;
-  const s = ty === 0x90 ? `note ${d1} (vél. ${d2})` : ty === 0xB0 ? `CC ${d1} = ${d2}` : ty === 0xE0 ? 'pitch' : 'statut ' + st.toString(16);
+  const s = ty === 0x90 ? `note ${d1} (vél. ${d2})` : ty === 0xB0 ? `CC ${d1} = ${d2}` : ty === 0xE0 ? 'pitch' : ty === 0xC0 ? `program ${d1}` : 'statut ' + st.toString(16);
   lastMsgs.unshift(`canal ${ch} : ${s}`);
   lastMsgs.length = Math.min(lastMsgs.length, 6);
 }
@@ -751,6 +783,9 @@ function onMidi(e) {
     } else if (learn) learnMessage(key, d2);
     else if (key in clickMap) onClick(key, d2);
     else if (d1 < 120 && !(d1 >= 65 && d1 <= 69)) onKnob(key, d2);
+  } else if (type === 0xC0) {                                            // program change
+    const key = 'pc' + ch;
+    if (learn) learnMessage(key, 127); else if (key in clickMap) onClick(key, 127);
   } else if (type === 0xE0) {                                            // bande « pitch »
     const bend = ((d2 << 7) | d1) - 8192;
     detuneSrc.offset.setTargetAtTime(bend / 8192 * 700, ctx.currentTime, 0.01);
@@ -801,19 +836,21 @@ function chime() {
 }
 
 // ─── Clavier d'ordinateur (pour tester sans MiniLab) ─────────────────────────
-const KEYS = ['KeyA', 'KeyW', 'KeyS', 'KeyE', 'KeyD', 'KeyF', 'KeyT', 'KeyG', 'KeyY', 'KeyH', 'KeyU', 'KeyJ', 'KeyK'];
+const PC_KEYS = ['KeyA', 'KeyW', 'KeyS', 'KeyE', 'KeyD', 'KeyF', 'KeyT', 'KeyG', 'KeyY', 'KeyH', 'KeyU', 'KeyJ', 'KeyK'];
 const fake = (data) => onMidi({ data });
 addEventListener('keydown', e => {
   if (!ctx || e.repeat) return;
-  const k = KEYS.indexOf(e.code);
+  const k = PC_KEYS.indexOf(e.code);
   if (k >= 0) fake([0x90, 60 + k, 100]);
   const m = /^Digit([1-8])$/.exec(e.code);
   if (m) fake([0x90 | PAD_CHANNEL, PAD_FIRST_NOTE + (+m[1] - 1), 100]);
   if (e.code === 'KeyN') selectInstrument(instr + 1);
-  if (e.code === 'KeyM') setTheme(themeIdx + 1);
+  if (e.code === 'KeyM') toggleVariation();
+  if (e.code === 'Comma') changeKey(-1);
+  if (e.code === 'Period') changeKey(+1);
 });
 addEventListener('keyup', e => {
-  const k = KEYS.indexOf(e.code);
+  const k = PC_KEYS.indexOf(e.code);
   if (ctx && k >= 0) fake([0x80, 60 + k, 0]);
 });
 
@@ -829,9 +866,9 @@ function renderInfo() {
   const th = theme();
   document.getElementById('infotext').textContent =
     `Entrées MIDI : ${ins}\nLumières : ${ledOut ? ledOut.name : 'MiniLab introuvable'}${sysexOK ? '' : ' (SysEx refusé)'}\n` +
-    `Thème : ${th.name} (${th.song}) · partie ${'AB'[seq.part]} · couches ${layersOn.map((on, i) => on ? LAYERS[i].icon : '·').join('')}\n` +
+    `Thème : ${th.name} (${th.song}) · partie ${'AB'[seq.part]} · tonalité ${KEY_NAMES[seq.key]} · couches ${layersOn.map((on, i) => on ? LAYERS[i].icon : '·').join('')}\n` +
     `Clavier : ${KID_INSTRUMENTS[instr].name} · Gamme magique : ${magic ? 'oui' : 'non'}\n` +
-    `Potards appris : ${Object.keys(knobMap).length}/16 · clics : ${Object.keys(clickMap).join(', ') || '—'}` +
+    `Potards appris : ${Object.keys(knobMap).length}/16 · boutons : ${Object.entries(clickMap).map(([k, a]) => `${k}→${a}`).join(', ') || '—'}` +
     ` (modes : ${Object.values(knobMode).map(k => k.mode || '?').join(' ') || '—'})\n` +
     `Son : ${ctx ? `${ctx.state} · ${ctx.sampleRate} Hz · latence ${Math.round(((ctx.baseLatency || 0) + (ctx.outputLatency || 0)) * 1000)} ms · ${banks.size} banques` : 'non démarré'}\n` +
     (lastError ? `Erreur : ${lastError}\n` : '') + '\n' +
@@ -854,7 +891,7 @@ function hideInfo() {
 let taps = [];
 function onTap() {
   ensureRunning();
-  if (learn) { stopLearn(); return; }
+  if (learn) { nextLearnStep(); return; }
   const now = performance.now();
   taps = taps.filter(t => now - t < 2000).concat(now);
   if (taps.length < 5) return;
