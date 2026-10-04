@@ -17,13 +17,16 @@
   #dot.ok { background: #032; }
   #info { position: fixed; left: 16px; right: 16px; bottom: 16px; display: none;
     font: 14px/1.5 monospace; color: #999; white-space: pre-wrap; }
-  #info button { margin-top: .5rem; font: inherit; background: #222; color: #ccc; border: 1px solid #444; padding: .4rem .8rem; }
+  #info button { margin: .5rem .5rem 0 0; font: inherit; background: #222; color: #ccc; border: 1px solid #444; padding: .5rem .9rem; }
+  #learnbox { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; text-align: center;
+    font-size: 1.6rem; line-height: 1.6; color: #ccc; background: #000; padding: 16px; }
 </style>
 </head>
 <body>
 <button id="start">▶ Toucher pour démarrer<small>Kid MIDI — branche le MiniLab puis touche l'écran</small></button>
 <div id="dot"></div>
-<div id="info"><span id="infotext"></span><br><button id="reset">Réapprendre les potards</button></div>
+<div id="info"><span id="infotext"></span><br><button id="learn">Apprendre les potards (1 → 16)</button><button id="close">Fermer</button></div>
+<div id="learnbox"></div>
 
 <script>
 'use strict';
@@ -31,7 +34,7 @@
 // ─── Réglages ────────────────────────────────────────────────────────────────
 const PAD_CHANNEL = 9;          // canal 10 (0-indexé) : canal d'usine des pads du MiniLab mkII
 const PAD_FIRST_NOTE = 36;      // pads 1-8 → notes 36-43, pads 9-16 → notes 44-51
-const MAX_VOICES = 10;          // limite pour quand on tape avec les deux mains
+const MAX_VOICES = 12;          // limite pour quand on tape avec les deux mains
 const MASTER_LEVEL = 0.8;
 const ATTRACT_AFTER_MS = 45 * 1000;    // chenillard lumineux après 45 s sans jeu
 const SLEEP_AFTER_MS = 10 * 60 * 1000; // dodo (lumières éteintes, son en pause) après 10 min
@@ -40,108 +43,12 @@ const SLEEP_AFTER_MS = 10 * 60 * 1000; // dodo (lumières éteintes, son en paus
 const C = { off: 0x00, red: 0x01, green: 0x04, yellow: 0x05, blue: 0x10, magenta: 0x11, cyan: 0x14, white: 0x7f };
 const RAINBOW = [C.red, C.yellow, C.green, C.cyan, C.blue, C.magenta, C.white];
 
-// ─── État ────────────────────────────────────────────────────────────────────
 const store = {
   get(k, d) { try { const v = localStorage.getItem('kidmidi.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('kidmidi.' + k, JSON.stringify(v)); } catch {} },
 };
-let instr = store.get('instr', 0);
-let magic = store.get('magic', true);   // « gamme magique » : tout sonne juste
-let knobMap = store.get('knobs', {});    // "canal:cc" → numéro de paramètre (appris au premier usage)
-const knobMode = {};                     // "canal:cc" → 'abs' | 'rel' | undefined (auto-détection)
 
-let ctx, synthIn, drumsIn, filter, delay, delayFb, delaySend, revSend, detuneSrc, lfo, lfoGain, noiseBuf;
-let midiAccess = null, ledOut = null, sysexOK = false;
-let sustain = false, modWheel = 0;
-let lastActivity = performance.now(), sleeping = false;
-const voices = [];          // { note, v }
-const sustained = new Set();
-
-// ─── Paramètres des potards ──────────────────────────────────────────────────
-const PARAMS = [
-  { name: 'Brillance',     color: C.yellow,  value: 0.75 },
-  { name: 'Écho',          color: C.cyan,    value: 0.15 },
-  { name: 'Grotte',        color: C.blue,    value: 0.30 },
-  { name: 'Vibrato',       color: C.magenta, value: 0.00 },
-  { name: 'Octave',        color: C.green,   value: 0.50 },
-  { name: 'Wah',           color: C.red,     value: 0.10 },
-  { name: 'Notes longues', color: C.white,   value: 0.30 },
-  { name: 'Rythme',        color: C.yellow,  value: 0.00 },
-];
-const P = { BRIGHT: 0, ECHO: 1, CAVE: 2, VIBRATO: 3, OCTAVE: 4, WAH: 5, LONG: 6, RHYTHM: 7 };
-const octaveShift = () => Math.round((PARAMS[P.OCTAVE].value - 0.5) * 4) * 12;
-
-function applyParams() {
-  if (!ctx) return;
-  const t = ctx.currentTime, v = PARAMS.map(p => p.value);
-  filter.frequency.setTargetAtTime(200 * Math.pow(90, v[P.BRIGHT]), t, 0.03);
-  filter.Q.setTargetAtTime(0.5 + v[P.WAH] * 14, t, 0.03);
-  delaySend.gain.setTargetAtTime(v[P.ECHO] * 0.7, t, 0.05);
-  delayFb.gain.setTargetAtTime(0.2 + v[P.ECHO] * 0.5, t, 0.05);
-  revSend.gain.setTargetAtTime(v[P.CAVE] * 1.2, t, 0.05);
-  const vib = Math.max(v[P.VIBRATO], modWheel);
-  lfoGain.gain.setTargetAtTime(vib * 80, t, 0.05);
-  lfo.frequency.setTargetAtTime(4 + vib * 4, t, 0.05);
-}
-
-// ─── Moteur audio ────────────────────────────────────────────────────────────
-function initAudio() {
-  ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
-
-  const limiter = ctx.createDynamicsCompressor();
-  limiter.threshold.value = -10; limiter.knee.value = 6; limiter.ratio.value = 12;
-  limiter.attack.value = 0.003; limiter.release.value = 0.25;
-  const master = ctx.createGain();
-  master.gain.value = MASTER_LEVEL;
-  master.connect(limiter).connect(ctx.destination);
-
-  const mix = ctx.createGain();
-  mix.connect(master);
-
-  // Écho
-  delay = ctx.createDelay(2); delay.delayTime.value = 0.33;
-  delayFb = ctx.createGain();
-  delaySend = ctx.createGain();
-  const delayTone = ctx.createBiquadFilter(); delayTone.type = 'lowpass'; delayTone.frequency.value = 3000;
-  mix.connect(delaySend).connect(delay).connect(delayTone);
-  delayTone.connect(delayFb).connect(delay);
-  delayTone.connect(master);
-
-  // Réverbe « grotte » (réponse impulsionnelle générée)
-  const conv = ctx.createConvolver();
-  const len = Math.floor(ctx.sampleRate * 2.8), ir = ctx.createBuffer(2, len, ctx.sampleRate);
-  for (let c = 0; c < 2; c++) {
-    const d = ir.getChannelData(c);
-    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
-  }
-  conv.buffer = ir;
-  revSend = ctx.createGain();
-  mix.connect(revSend).connect(conv).connect(master);
-
-  // Synthé clavier → filtre global ; percussions directement dans le mix
-  filter = ctx.createBiquadFilter(); filter.type = 'lowpass';
-  synthIn = ctx.createGain();
-  synthIn.connect(filter).connect(mix);
-  drumsIn = ctx.createGain();
-  drumsIn.connect(mix);
-
-  // Pitch bend + vibrato partagés par toutes les voix (branchés sur osc.detune)
-  detuneSrc = ctx.createConstantSource(); detuneSrc.offset.value = 0; detuneSrc.start();
-  lfo = ctx.createOscillator(); lfo.frequency.value = 5;
-  lfoGain = ctx.createGain(); lfoGain.gain.value = 0;
-  lfo.connect(lfoGain); lfo.start();
-
-  noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
-  const nd = noiseBuf.getChannelData(0);
-  for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
-
-  applyParams();
-  setInterval(seqTick, 25);
-}
-
-const mtof = n => 440 * Math.pow(2, (n - 69) / 12);
-
-// ─── Instruments du clavier (pads 9-15) ─────────────────────────────────────
+// ─── Instruments du clavier ──────────────────────────────────────────────────
 const INSTRUMENTS = [
   { name: 'Piano', color: C.white, level: 0.5, a: 0.005, d: 1.2, s: 0, r: 0.3,
     partials: [{ type: 'triangle', ratio: 1, gain: 0.6 }, { ratio: 2, gain: 0.25 }, { ratio: 3, gain: 0.08 }],
@@ -167,8 +74,168 @@ const INSTRUMENTS = [
 ];
 const MAGIC_PAD = 15; // pad 16 : gamme magique on/off
 
-function playVoice(spec, note, vel) {
-  const t = ctx.currentTime, f = mtof(note);
+// ─── Rythmes (boîte à rythme + basse) ────────────────────────────────────────
+// Batterie : 0 grosse caisse, 1 caisse claire, 2 charleston, 3 clap, 4 boing, 5 goutte, 6 laser, 7 cloche.
+// Basse : [pas, demi-tons au-dessus du do grave, durée en pas]. Tout est en do pentatonique,
+// donc ça colle avec la « gamme magique » du clavier.
+const EVEN = [0, 2, 4, 6, 8, 10, 12, 14];
+const ALL16 = [...Array(16).keys()];
+const GROOVES = [
+  { name: 'Boum-tchak', color: C.red, len: 16,
+    drums: { 0: [0, 8], 1: [4, 12], 2: EVEN },
+    bass: [[0, 0, 3], [3, 0, 2], [8, 7, 3], [11, 9, 2]] },
+  { name: 'Disco', color: C.magenta, len: 16,
+    drums: { 0: [0, 4, 8, 12], 3: [4, 12], 2: [2, 6, 10, 14] },
+    bass: [[0, 0, 1], [2, 12, 1], [4, 0, 1], [6, 12, 1], [8, 9, 1], [10, 21, 1], [12, 7, 1], [14, 19, 1]] },
+  { name: 'Hip-hop', color: C.blue, len: 16,
+    drums: { 0: [0, 3, 10], 1: [4, 12], 2: EVEN },
+    bass: [[0, 0, 3], [3, 0, 2], [10, -5, 4]] },
+  { name: 'Reggae', color: C.green, len: 16,
+    drums: { 0: [8], 1: [8], 2: [2, 6, 10, 14] },
+    bass: [[0, 0, 2], [3, 0, 1], [6, 4, 2], [8, 7, 3], [12, 9, 2]] },
+  { name: 'Valse', color: C.cyan, len: 12,
+    drums: { 0: [0], 2: [4, 8], 7: [0] },
+    bass: [[0, 0, 4], [4, 7, 2], [8, 7, 2]] },
+  { name: 'Samba', color: C.yellow, len: 16,
+    drums: { 0: [0, 3, 4, 7, 8, 11, 12, 15], 2: ALL16, 7: [0, 6, 10] },
+    bass: [[0, 0, 2], [3, 7, 1], [4, 0, 2], [7, 7, 1], [8, 0, 2], [11, 7, 1], [12, 0, 2], [15, 7, 1]] },
+  { name: 'Marche', color: C.white, len: 16,
+    drums: { 0: [0, 8], 1: [0, 2, 3, 4, 6, 8, 10, 11, 12, 14] },
+    bass: [[0, 0, 4], [8, 7, 4]] },
+  { name: 'Rigolo', color: C.green, len: 16,
+    drums: { 0: [0, 8], 3: [4], 5: [6, 14], 4: [12], 6: [15] },
+    bass: [[0, 0, 2], [8, 4, 2]] },
+];
+const SEQ_VEL = [0.55, 0.45, 0.3, 0.4, 0.35, 0.35, 0.25, 0.3];
+
+// ─── Les 16 potards ──────────────────────────────────────────────────────────
+// Rangée du haut = le son du clavier, rangée du bas = l'accompagnement et le volume.
+const PARAMS = [
+  { name: 'Instrument',      icon: '🎹', color: C.white,   value: 0,    steps: INSTRUMENTS.length },
+  { name: 'Brillance',       icon: '☀️', color: C.yellow,  value: 0.75 },
+  { name: 'Wah',             icon: '🦆', color: C.red,     value: 0.1 },
+  { name: 'Vibrato',         icon: '〰️', color: C.magenta, value: 0 },
+  { name: 'Octave',          icon: '🐘', color: C.green,   value: 0.5 },
+  { name: 'Notes longues',   icon: '⏳', color: C.white,   value: 0.3 },
+  { name: 'Écho',            icon: '🏔️', color: C.cyan,    value: 0.15 },
+  { name: 'Grotte',          icon: '🦇', color: C.blue,    value: 0.3 },
+  { name: 'Rythme',          icon: '🥁', color: C.yellow,  value: 0,    steps: GROOVES.length + 1 },
+  { name: 'Vitesse',         icon: '🐇', color: C.green,   value: 0.4 },
+  { name: 'Basse',           icon: '🎸', color: C.red,     value: 0.6 },
+  { name: 'Volume batterie', icon: '🔊', color: C.cyan,    value: 0.7 },
+  { name: 'Gros son',        icon: '🎺', color: C.magenta, value: 0,    steps: 3 },
+  { name: 'Arpège',          icon: '🪜', color: C.blue,    value: 0 },
+  { name: 'Grrr',            icon: '🐯', color: C.red,     value: 0 },
+  { name: 'Volume',          icon: '📢', color: C.white,   value: 0.8 },
+];
+const P = { INSTR: 0, BRIGHT: 1, WAH: 2, VIBRATO: 3, OCTAVE: 4, LONG: 5, ECHO: 6, CAVE: 7,
+            GROOVE: 8, TEMPO: 9, BASS: 10, DRUMVOL: 11, FAT: 12, ARP: 13, GRR: 14, VOLUME: 15 };
+
+const selIndex = pi => { const p = PARAMS[pi]; return Math.min(p.steps - 1, Math.floor(p.value * p.steps)); };
+const octaveShift = () => Math.round((PARAMS[P.OCTAVE].value - 0.5) * 4) * 12;
+const arpOn = () => PARAMS[P.ARP].value > 0.05;
+
+// ─── État ────────────────────────────────────────────────────────────────────
+let instr = Math.min(store.get('instr', 0), INSTRUMENTS.length - 1);
+PARAMS[P.INSTR].value = (instr + 0.5) / INSTRUMENTS.length;
+let magic = store.get('magic', true);    // « gamme magique » : tout sonne juste
+let knobMap = store.get('knobs16', {});  // "canal:cc" → numéro de potard 0-15
+const knobMode = {};                     // "canal:cc" → 'abs' quand on a vu une valeur absolue
+let learn = null;                        // { next } pendant l'apprentissage guidé
+
+let ctx, master, synthIn, drumsIn, seqBus, bassBus, shaper, filter, delayFb, delaySend, revSend, detuneSrc, lfo, lfoGain, noiseBuf;
+let midiAccess = null, ledOut = null, sysexOK = false;
+let sustain = false, modWheel = 0, lastGrr = -1;
+let lastActivity = performance.now(), sleeping = false;
+const voices = [];          // { note, v }
+const sustained = new Set();
+const arpNotes = [];
+let arpVel = 100;
+const lastMsgs = [];
+
+function applyParams() {
+  if (!ctx) return;
+  const t = ctx.currentTime, v = PARAMS.map(p => p.value);
+  filter.frequency.setTargetAtTime(200 * Math.pow(90, v[P.BRIGHT]), t, 0.03);
+  filter.Q.setTargetAtTime(0.5 + v[P.WAH] * 14, t, 0.03);
+  delaySend.gain.setTargetAtTime(v[P.ECHO] * 0.7, t, 0.05);
+  delayFb.gain.setTargetAtTime(0.2 + v[P.ECHO] * 0.5, t, 0.05);
+  revSend.gain.setTargetAtTime(v[P.CAVE] * 1.2, t, 0.05);
+  const vib = Math.max(v[P.VIBRATO], modWheel);
+  lfoGain.gain.setTargetAtTime(vib * 80, t, 0.05);
+  lfo.frequency.setTargetAtTime(4 + vib * 4, t, 0.05);
+  seqBus.gain.setTargetAtTime(v[P.DRUMVOL], t, 0.05);
+  bassBus.gain.setTargetAtTime(v[P.BASS] * 0.7, t, 0.05);
+  master.gain.setTargetAtTime(MASTER_LEVEL * (0.25 + 0.75 * v[P.VOLUME]), t, 0.05);
+  const grr = Math.round(v[P.GRR] * 20);
+  if (grr !== lastGrr) {
+    lastGrr = grr;
+    const k = grr * 2.5, curve = new Float32Array(1024);
+    for (let i = 0; i < curve.length; i++) { const x = i / 511.5 - 1; curve[i] = (1 + k) * x / (1 + k * Math.abs(x)); }
+    shaper.curve = curve;
+  }
+}
+
+// ─── Moteur audio ────────────────────────────────────────────────────────────
+function initAudio() {
+  ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+
+  const limiter = ctx.createDynamicsCompressor();
+  limiter.threshold.value = -10; limiter.knee.value = 6; limiter.ratio.value = 12;
+  limiter.attack.value = 0.003; limiter.release.value = 0.25;
+  master = ctx.createGain();
+  master.connect(limiter).connect(ctx.destination);
+
+  const mix = ctx.createGain();
+  mix.connect(master);
+
+  // Écho
+  const delay = ctx.createDelay(2); delay.delayTime.value = 0.33;
+  delayFb = ctx.createGain();
+  delaySend = ctx.createGain();
+  const delayTone = ctx.createBiquadFilter(); delayTone.type = 'lowpass'; delayTone.frequency.value = 3000;
+  mix.connect(delaySend).connect(delay).connect(delayTone);
+  delayTone.connect(delayFb).connect(delay);
+  delayTone.connect(master);
+
+  // Réverbe « grotte » (réponse impulsionnelle générée)
+  const conv = ctx.createConvolver();
+  const len = Math.floor(ctx.sampleRate * 2.8), ir = ctx.createBuffer(2, len, ctx.sampleRate);
+  for (let c = 0; c < 2; c++) {
+    const d = ir.getChannelData(c);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
+  }
+  conv.buffer = ir;
+  revSend = ctx.createGain();
+  mix.connect(revSend).connect(conv).connect(master);
+
+  // Clavier → distorsion « Grrr » → filtre global ; percussions, rythme et basse directement dans le mix
+  shaper = ctx.createWaveShaper(); shaper.oversample = '2x';
+  filter = ctx.createBiquadFilter(); filter.type = 'lowpass';
+  synthIn = ctx.createGain();
+  synthIn.connect(shaper).connect(filter).connect(mix);
+  drumsIn = ctx.createGain(); drumsIn.connect(mix);
+  seqBus = ctx.createGain(); seqBus.connect(mix);
+  bassBus = ctx.createGain(); bassBus.connect(mix);
+
+  // Pitch bend + vibrato partagés par toutes les voix (branchés sur osc.detune)
+  detuneSrc = ctx.createConstantSource(); detuneSrc.offset.value = 0; detuneSrc.start();
+  lfo = ctx.createOscillator(); lfo.frequency.value = 5;
+  lfoGain = ctx.createGain(); lfoGain.gain.value = 0;
+  lfo.connect(lfoGain); lfo.start();
+
+  noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+  const nd = noiseBuf.getChannelData(0);
+  for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+
+  applyParams();
+  setInterval(seqTick, 25);
+}
+
+const mtof = n => 440 * Math.pow(2, (n - 69) / 12);
+
+function playVoice(spec, note, vel, t = ctx.currentTime) {
+  const f = mtof(note);
   const out = ctx.createGain(); out.gain.value = 0;
   out.connect(synthIn);
   let dest = out;
@@ -243,20 +310,44 @@ function releaseVoice(v, rel) {
 const PENTA = [0, 0, 2, 2, 4, 4, 7, 7, 7, 9, 9, 12];
 const snap = n => n - (n % 12) + PENTA[n % 12];
 
-function keyOn(note, vel) {
+// Note jouée → notes réellement entendues (gamme magique, octave, « gros son »)
+function voicedNotes(note) {
   const spec = INSTRUMENTS[instr];
-  const n = Math.max(12, Math.min(115, (magic ? snap(note) : note) + (spec.octave || 0) + octaveShift()));
-  if (voices.length >= MAX_VOICES) releaseVoice(voices[0].v, 0.05);
-  voices.push({ note, v: playVoice(spec, n, vel) });
-  flash(note % 8, spec.color, 200);
+  const n = Math.max(12, Math.min(108, (magic ? snap(note) : note) + (spec.octave || 0) + octaveShift()));
+  return [[n], [n, n + 12], [n, n + 7, n + 12]][selIndex(P.FAT)];
+}
+
+function startVoices(note, vel, t) {
+  const spec = INSTRUMENTS[instr], started = [];
+  for (const n of voicedNotes(note)) {
+    if (voices.length >= MAX_VOICES) releaseVoice(voices[0].v, 0.05);
+    const v = playVoice(spec, n, vel, t);
+    voices.push({ note, v });
+    started.push(v);
+  }
+  return started;
+}
+
+function keyOn(note, vel) {
+  flash(note % 8, INSTRUMENTS[instr].color, 200);
+  if (arpOn()) { if (!arpNotes.includes(note)) arpNotes.push(note); arpVel = vel; return; }
+  startVoices(note, vel);
 }
 
 function keyOff(note) {
+  const i = arpNotes.indexOf(note);
+  if (i >= 0) arpNotes.splice(i, 1);
   const rel = INSTRUMENTS[instr].r * (0.3 + 3.7 * PARAMS[P.LONG].value);
   for (const x of voices) {
     if (x.note !== note || x.v.released) continue;
     if (sustain) sustained.add(x.v); else releaseVoice(x.v, rel);
   }
+}
+
+function selectInstrument(i, fromKnob) {
+  instr = i; store.set('instr', instr);
+  if (!fromKnob) PARAMS[P.INSTR].value = (i + 0.5) / INSTRUMENTS.length;
+  playVoice(INSTRUMENTS[instr], 60 + (INSTRUMENTS[instr].octave || 0), 100);
 }
 
 // ─── Percussions et bruitages (pads 1-8) ─────────────────────────────────────
@@ -280,22 +371,22 @@ const gain = () => ctx.createGain();
 const wobble = () => 1 + (Math.random() - 0.5) * 0.06; // chaque coup est un peu différent
 
 const DRUMS = [
-  { name: 'Grosse caisse', color: C.red, play(t, a) {
+  { name: 'Grosse caisse', color: C.red, play(t, a, dest) {
     const o = osc('sine', 150 * wobble(), t, 0.5), g = gain();
     o.frequency.exponentialRampToValueAtTime(42, t + 0.12);
-    envExp(g, t, a, 0.45); o.connect(g).connect(drumsIn);
+    envExp(g, t, a, 0.45); o.connect(g).connect(dest);
   } },
-  { name: 'Caisse claire', color: C.yellow, play(t, a) {
+  { name: 'Caisse claire', color: C.yellow, play(t, a, dest) {
     const g = gain(); envExp(g, t, 0.7 * a, 0.2);
-    noise(t, 0.25).connect(biquad('highpass', 1500)).connect(g).connect(drumsIn);
+    noise(t, 0.25).connect(biquad('highpass', 1500)).connect(g).connect(dest);
     const g2 = gain(); envExp(g2, t, 0.4 * a, 0.1);
-    osc('triangle', 190 * wobble(), t, 0.12).connect(g2).connect(drumsIn);
+    osc('triangle', 190 * wobble(), t, 0.12).connect(g2).connect(dest);
   } },
-  { name: 'Charleston', color: C.cyan, play(t, a) {
+  { name: 'Charleston', color: C.cyan, play(t, a, dest) {
     const g = gain(); envExp(g, t, 0.35 * a, 0.06);
-    noise(t, 0.08).connect(biquad('highpass', 7000)).connect(g).connect(drumsIn);
+    noise(t, 0.08).connect(biquad('highpass', 7000)).connect(g).connect(dest);
   } },
-  { name: 'Clap', color: C.magenta, play(t, a) {
+  { name: 'Clap', color: C.magenta, play(t, a, dest) {
     const g = gain();
     g.gain.setValueAtTime(0.0001, t);
     for (let i = 0; i < 3; i++) {
@@ -303,64 +394,98 @@ const DRUMS = [
       g.gain.setValueAtTime(a, tt); g.gain.exponentialRampToValueAtTime(0.05, tt + 0.01);
     }
     g.gain.setValueAtTime(0.8 * a, t + 0.036); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
-    noise(t, 0.32).connect(biquad('bandpass', 1100, 1.2)).connect(g).connect(drumsIn);
+    noise(t, 0.32).connect(biquad('bandpass', 1100, 1.2)).connect(g).connect(dest);
   } },
-  { name: 'Boing', color: C.green, play(t, a) {
+  { name: 'Boing', color: C.green, play(t, a, dest) {
     const o = osc('sine', 110 * wobble(), t, 0.7), g = gain();
     o.frequency.exponentialRampToValueAtTime(330, t + 0.35);
     const l = osc('sine', 14, t, 0.7), lg = gain(); lg.gain.value = 25;
     l.connect(lg).connect(o.frequency);
-    envExp(g, t, 0.6 * a, 0.7); o.connect(g).connect(drumsIn);
+    envExp(g, t, 0.6 * a, 0.7); o.connect(g).connect(dest);
   } },
-  { name: 'Goutte', color: C.blue, play(t, a) {
+  { name: 'Goutte', color: C.blue, play(t, a, dest) {
     const o = osc('sine', 500 * wobble(), t, 0.2), g = gain();
     o.frequency.exponentialRampToValueAtTime(1700 * wobble(), t + 0.07);
-    envExp(g, t, 0.5 * a, 0.18); o.connect(g).connect(drumsIn);
+    envExp(g, t, 0.5 * a, 0.18); o.connect(g).connect(dest);
   } },
-  { name: 'Laser', color: C.white, play(t, a) {
+  { name: 'Laser', color: C.white, play(t, a, dest) {
     const o = osc('square', 2000 * wobble(), t, 0.4), g = gain();
     o.frequency.exponentialRampToValueAtTime(100, t + 0.4);
-    envExp(g, t, 0.25 * a, 0.4); o.connect(biquad('lowpass', 2500)).connect(g).connect(drumsIn);
+    envExp(g, t, 0.25 * a, 0.4); o.connect(biquad('lowpass', 2500)).connect(g).connect(dest);
   } },
-  { name: 'Cloche', color: C.yellow, play(t, a) {
+  { name: 'Cloche', color: C.yellow, play(t, a, dest) {
     const f = 523 * wobble(), o = osc('sine', f, t, 2), m = osc('sine', f * 1.41, t, 2), mg = gain(), g = gain();
     mg.gain.setValueAtTime(f * 3, t); mg.gain.exponentialRampToValueAtTime(f * 0.1, t + 1.5);
     m.connect(mg).connect(o.frequency);
-    envExp(g, t, 0.4 * a, 2); o.connect(g).connect(drumsIn);
+    envExp(g, t, 0.4 * a, 2); o.connect(g).connect(dest);
   } },
 ];
+const hitColor = c => c === C.white ? C.off : C.white;
 
 function padOn(i, vel) {
   const a = 0.4 + 0.6 * vel / 127;
   if (i < 8) {
-    DRUMS[i].play(ctx.currentTime, a);
-    flash(i, DRUMS[i].color === C.white ? C.off : C.white, 150);
+    DRUMS[i].play(ctx.currentTime, a, drumsIn);
+    flash(i, hitColor(DRUMS[i].color), 150);
   } else if (i === MAGIC_PAD) {
     magic = !magic; store.set('magic', magic);
     const notes = magic ? [72, 76, 79, 84] : [84, 79, 76, 72];
     notes.forEach((n, k) => setTimeout(() => playVoice(INSTRUMENTS[3], n, 90), k * 90));
   } else if (i - 8 < INSTRUMENTS.length) {
-    instr = i - 8; store.set('instr', instr);
-    playVoice(INSTRUMENTS[instr], 60 + (INSTRUMENTS[instr].octave || 0), 100);
+    selectInstrument(i - 8);
     flash(i, C.white, 150);
   }
 }
 
-// ─── Boîte à rythme (potard « Rythme ») ──────────────────────────────────────
-const seq = { on: false, step: 0, next: 0 };
+// ─── Horloge : rythmes, basse et arpège ──────────────────────────────────────
+function playBass(note, t, dur) {
+  const f = mtof(note), g = gain(), lp = biquad('lowpass', 700, 4);
+  const o1 = osc('sawtooth', f, t, dur + 0.1), o2 = osc('sine', f / 2, t, dur + 0.1);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.5, t + 0.008);
+  g.gain.setTargetAtTime(0.3, t + 0.01, 0.1);
+  g.gain.setTargetAtTime(0.0001, t + dur, 0.03);
+  lp.frequency.setValueAtTime(1200, t); lp.frequency.exponentialRampToValueAtTime(350, t + 0.2);
+  o1.connect(lp); o2.connect(lp); lp.connect(g).connect(bassBus);
+}
+
+function playGrooveStep(gr, step, t, ms, stepDur) {
+  const s = step % gr.len;
+  for (const [d, steps] of Object.entries(gr.drums)) {
+    if (!steps.includes(s)) continue;
+    const di = +d;
+    DRUMS[di].play(t, SEQ_VEL[di] * (s % 4 === 0 ? 1 : 0.8), seqBus);
+    setTimeout(() => flash(di, hitColor(DRUMS[di].color), 90), ms);
+  }
+  const b = gr.bass.find(x => x[0] === s);
+  if (b) playBass(36 + b[1], t, stepDur * b[2] * 0.9);
+}
+
+let arpIdx = 0;
+function playArpStep(step, t, ms, stepDur) {
+  if (!arpOn() || !arpNotes.length) return;
+  const every = PARAMS[P.ARP].value < 0.5 ? 2 : 1;   // à fond = deux fois plus vite
+  if (step % every) return;
+  const note = arpNotes[arpIdx++ % arpNotes.length];
+  const vs = startVoices(note, arpVel, t);
+  vs.forEach(v => { const x = voices.find(y => y.v === v); if (x) x.note = -1; }); // le relâchement des touches ne les coupe pas
+  setTimeout(() => vs.forEach(v => releaseVoice(v, 0.12)), ms + stepDur * every * 800);
+  setTimeout(() => flash(note % 8, INSTRUMENTS[instr].color, 100), ms);
+}
+
+const seq = { running: false, step: 0, next: 0 };
 function seqTick() {
   if (!ctx || ctx.state !== 'running') return;
-  const p = PARAMS[P.RHYTHM].value;
-  if (p < 0.05) { seq.on = false; return; }
-  if (!seq.on) { seq.on = true; seq.step = 0; seq.next = ctx.currentTime + 0.05; }
-  const stepDur = 60 / (70 + p * 110) / 4;
+  const g = selIndex(P.GROOVE);
+  if (g === 0 && !arpOn()) { seq.running = false; return; }
+  if (!seq.running) { seq.running = true; seq.step = 0; seq.next = ctx.currentTime + 0.05; }
+  const stepDur = 60 / (70 + PARAMS[P.TEMPO].value * 90) / 4;
   if (seq.next < ctx.currentTime - 0.05) seq.next = ctx.currentTime + 0.02;
   while (seq.next < ctx.currentTime + 0.12) {
-    const s = seq.step, t = seq.next, ms = Math.max(0, (t - ctx.currentTime) * 1000);
-    if (s === 0 || s === 8) { DRUMS[0].play(t, 0.5); setTimeout(() => flash(0, C.white, 120), ms); }
-    if (s === 4 || s === 12) { DRUMS[1].play(t, 0.4); setTimeout(() => flash(1, C.white, 120), ms); }
-    if (s % 2 === 0) DRUMS[2].play(t, s % 4 ? 0.25 : 0.4);
-    seq.step = (s + 1) % 16;
+    const t = seq.next, ms = Math.max(0, (t - ctx.currentTime) * 1000);
+    if (g > 0) playGrooveStep(GROOVES[g - 1], seq.step, t, ms, stepDur);
+    playArpStep(seq.step, t, ms, stepDur);
+    seq.step++;
     seq.next += stepDur;
   }
 }
@@ -370,9 +495,15 @@ const led = { sent: new Array(16).fill(-1), flash: new Array(16).fill(null), bar
 
 function flash(i, color, ms) { led.flash[i] = { color, until: performance.now() + ms }; }
 
-function showBar(param) {
-  const p = PARAMS[param];
-  led.bar = { n: Math.round(p.value * 8), color: p.color, until: performance.now() + 1200 };
+// Jauge lumineuse quand on tourne un potard
+function showBar(pi) {
+  const p = PARAMS[pi];
+  let n, color = p.color;
+  if (pi === P.INSTR) { n = instr + 1; color = INSTRUMENTS[instr].color; }
+  else if (pi === P.GROOVE) { const g = selIndex(pi); n = g; color = g ? GROOVES[g - 1].color : C.off; }
+  else if (p.steps) n = Math.round(selIndex(pi) / (p.steps - 1) * 8);
+  else n = Math.round(p.value * 8);
+  led.bar = { n, color, until: performance.now() + 1200 };
 }
 
 function sendPad(i, color) {
@@ -383,10 +514,11 @@ function sendPad(i, color) {
 
 function padColor(i, now) {
   if (sleeping) return C.off;
+  if (learn) return (i % 8) <= (learn.next % 8) ? (learn.next < 8 ? C.green : C.blue) : C.off;
   let c;
   if (i < 8) {
     c = DRUMS[i].color;
-    if (now - lastActivity > ATTRACT_AFTER_MS) {           // chenillard pour inviter à jouer
+    if (now - lastActivity > ATTRACT_AFTER_MS && !seq.running) {   // chenillard pour inviter à jouer
       const k = Math.floor(now / 350);
       c = (k % 8 === i) ? RAINBOW[Math.floor(k / 8) % RAINBOW.length] : C.off;
     }
@@ -410,21 +542,67 @@ function renderLeds() {
   }
 }
 
-// ─── MIDI ────────────────────────────────────────────────────────────────────
+// ─── Potards ─────────────────────────────────────────────────────────────────
 function onKnob(key, value) {
-  if (!(key in knobMap)) { knobMap[key] = Object.keys(knobMap).length % PARAMS.length; store.set('knobs', knobMap); }
-  const slot = knobMap[key], p = PARAMS[slot];
+  if (learn) { learnKnob(key); return; }
+  if (!(key in knobMap)) {                     // potard inconnu : première place libre
+    const used = new Set(Object.values(knobMap));
+    const free = PARAMS.findIndex((_, i) => !used.has(i));
+    if (free < 0) return;
+    knobMap[key] = free; store.set('knobs16', knobMap);
+  }
+  const pi = knobMap[key], p = PARAMS[pi];
   // Auto-détection : mode absolu (0-127) ou relatif Arturia (64 ± n)
   if (value < 56 || value > 72) knobMode[key] = 'abs';
   if (knobMode[key] === 'abs') p.value = value / 127;
   else p.value = Math.max(0, Math.min(1, p.value + (value - 64) * 0.02));
+  if (pi === P.INSTR && selIndex(P.INSTR) !== instr) selectInstrument(selIndex(P.INSTR), true);
   applyParams();
-  showBar(slot);
+  showBar(pi);
+}
+
+// Apprentissage guidé : le parent tourne les potards dans l'ordre 1 → 16
+function startLearn() {
+  learn = { next: 0, seen: new Set() };
+  knobMap = {};
+  for (const k in knobMode) delete knobMode[k];
+  document.getElementById('info').style.display = 'none';
+  updateLearnBox();
+}
+function learnKnob(key) {
+  if (learn.seen.has(key)) return;
+  learn.seen.add(key);
+  knobMap[key] = learn.next++;
+  store.set('knobs16', knobMap);
+  playVoice(INSTRUMENTS[3], 72 + PENTA[learn.next % 12], 80);
+  if (learn.next >= PARAMS.length) stopLearn(); else updateLearnBox();
+}
+function stopLearn() {
+  learn = null;
+  document.getElementById('learnbox').style.display = 'none';
+  [60, 64, 67, 72].forEach((n, k) => setTimeout(() => playVoice(INSTRUMENTS[3], n + 12, 80), k * 120));
+}
+function updateLearnBox() {
+  const n = learn.next, p = PARAMS[n], box = document.getElementById('learnbox');
+  box.textContent = `Tourne le potard n°${n + 1}\n(${n < 8 ? 'rangée du haut' : 'rangée du bas'}, ` +
+    `${n % 8 ? (n % 8 + 1) + 'ᵉ' : '1ᵉʳ'} en partant de la gauche)\n\n${p.icon} ${p.name}\n\nToucher l'écran pour arrêter`;
+  box.style.whiteSpace = 'pre-wrap';
+  box.style.display = 'flex';
+}
+
+// ─── MIDI ────────────────────────────────────────────────────────────────────
+function logMsg(st, d1, d2) {
+  const ch = (st & 0x0F) + 1, ty = st & 0xF0;
+  if (ty === 0x80 || (ty === 0x90 && d2 === 0)) return;
+  const s = ty === 0x90 ? `note ${d1} (vél. ${d2})` : ty === 0xB0 ? `CC ${d1} = ${d2}` : ty === 0xE0 ? 'pitch' : 'statut ' + st.toString(16);
+  lastMsgs.unshift(`canal ${ch} : ${s}`);
+  lastMsgs.length = Math.min(lastMsgs.length, 6);
 }
 
 function onMidi(e) {
   const [st, d1, d2 = 0] = e.data;
   if (st >= 0xF0) return; // horloge, sysex…
+  logMsg(st, d1, d2);
   wake();
   const type = st & 0xF0, ch = st & 0x0F;
   const isPad = ch === PAD_CHANNEL && d1 >= PAD_FIRST_NOTE && d1 < PAD_FIRST_NOTE + 16;
@@ -470,9 +648,10 @@ function wake() {
   [60, 64, 67].forEach((n, k) => setTimeout(() => playVoice(INSTRUMENTS[3], n + 12, 80), 150 + k * 120));
 }
 function checkSleep() {
-  if (!sleeping && ctx && performance.now() - lastActivity > SLEEP_AFTER_MS) {
+  if (!sleeping && !learn && ctx && performance.now() - lastActivity > SLEEP_AFTER_MS) {
     sleeping = true;
-    PARAMS[P.RHYTHM].value = 0;
+    PARAMS[P.GROOVE].value = 0;
+    PARAMS[P.ARP].value = 0;
     setTimeout(() => { if (sleeping) ctx.suspend(); }, 500);
   }
 }
@@ -499,28 +678,40 @@ async function keepAwake() {
 }
 document.addEventListener('visibilitychange', keepAwake);
 
+let infoTimer = null, infoUntil = 0;
+function renderInfo() {
+  const ins = midiAccess ? [...midiAccess.inputs.values()].map(i => i.name).join(', ') || '—' : 'Web MIDI indisponible';
+  const g = selIndex(P.GROOVE);
+  document.getElementById('infotext').textContent =
+    `Entrées MIDI : ${ins}\nLumières : ${ledOut ? ledOut.name : 'MiniLab introuvable'}${sysexOK ? '' : ' (SysEx refusé)'}\n` +
+    `Instrument : ${INSTRUMENTS[instr].name} · Rythme : ${g ? GROOVES[g - 1].name : 'arrêt'} · Gamme magique : ${magic ? 'oui' : 'non'}\n` +
+    `Potards appris : ${Object.keys(knobMap).length}/16\n\n` +
+    `Derniers messages reçus :\n${lastMsgs.join('\n') || '—'}`;
+  if (performance.now() > infoUntil) hideInfo();
+}
+function showInfo() {
+  infoUntil = performance.now() + 20000;
+  document.getElementById('info').style.display = 'block';
+  clearInterval(infoTimer);
+  infoTimer = setInterval(renderInfo, 250);
+  renderInfo();
+}
+function hideInfo() {
+  clearInterval(infoTimer);
+  document.getElementById('info').style.display = 'none';
+}
+
 let taps = [];
 function onTap() {
+  if (learn) { stopLearn(); return; }
   const now = performance.now();
   taps = taps.filter(t => now - t < 2000).concat(now);
   if (taps.length < 5) return;
   taps = [];
-  const ins = midiAccess ? [...midiAccess.inputs.values()].map(i => i.name).join(', ') || '—' : 'Web MIDI indisponible';
-  document.getElementById('infotext').textContent =
-    `Entrées MIDI : ${ins}\nLumières : ${ledOut ? ledOut.name : 'MiniLab introuvable'}${sysexOK ? '' : ' (SysEx refusé)'}\n` +
-    `Instrument : ${INSTRUMENTS[instr].name} · Gamme magique : ${magic ? 'oui' : 'non'}\n` +
-    `Potards appris : ${Object.keys(knobMap).length}\n` +
-    PARAMS.map(p => `${p.name} ${Math.round(p.value * 100)}%`).join(' · ');
-  const box = document.getElementById('info');
-  box.style.display = 'block';
-  clearTimeout(onTap.timer);
-  onTap.timer = setTimeout(() => { box.style.display = 'none'; }, 8000);
+  showInfo();
 }
-document.getElementById('reset').addEventListener('click', e => {
-  e.stopPropagation();
-  knobMap = {}; store.set('knobs', knobMap);
-  document.getElementById('info').style.display = 'none';
-});
+document.getElementById('learn').addEventListener('pointerdown', e => { e.stopPropagation(); hideInfo(); startLearn(); });
+document.getElementById('close').addEventListener('pointerdown', e => { e.stopPropagation(); hideInfo(); });
 
 document.getElementById('start').addEventListener('click', async () => {
   document.getElementById('start').remove();

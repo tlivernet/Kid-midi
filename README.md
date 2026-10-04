@@ -27,34 +27,72 @@ Conseils tablette : luminosité au minimum, mode « Ne pas déranger », et **é
 (Paramètres → Sécurité → Épingler l'application) pour que les enfants ne puissent pas en sortir.
 Régler le volume max sur l'enceinte : l'appli a déjà un limiteur, mais c'est l'enceinte qui décide.
 
+## Première mise en route : apprendre les potards (une seule fois)
+
+Les potards du MiniLab n'ont pas de numéro « officiel » côté MIDI : il faut dire à l'appli lequel est lequel.
+
+1. Dans l'appli, **taper 5 fois vite sur l'écran** → le panneau parent s'affiche.
+2. **« Apprendre les potards (1 → 16) »**, puis tourner chaque potard un petit coup, dans l'ordre :
+   rangée du haut de gauche à droite, puis rangée du bas de gauche à droite. L'écran indique quel potard tourner,
+   les pads s'allument pour montrer la progression, un petit « ding » confirme chaque potard.
+3. Imprimer **`etiquettes.html`** et coller les icônes au-dessus des potards et des pads (même un enfant qui ne lit pas s'y retrouve).
+
 ## Ce que fait chaque partie du MiniLab
 
-| Élément | Effet |
-|---|---|
-| **Pads 1-8** | Grosse caisse 🔴, caisse claire 🟡, charleston 🩵, clap 🟣, boing 🟢, goutte 🔵, laser ⚪, cloche 🟡 — le pad flashe quand on tape |
-| **Pads 9-15** (bouton *Pad 9-16*) | Choix de l'instrument du clavier : piano, flûte, bulle, boîte à musique, robot, chat, espace. L'instrument choisi **clignote** |
-| **Pad 16** | « Gamme magique » on/off (allumé blanc = on). En mode magique, toutes les touches tombent sur une gamme pentatonique : impossible de jouer faux |
-| **Clavier** | Joue l'instrument choisi ; chaque note fait aussi flasher un pad de la couleur de l'instrument |
-| **Potards** | Brillance, Écho, Grotte (réverbe), Vibrato, Octave, Wah, Notes longues, **Rythme** (boîte à rythme, tout à gauche = arrêt). En tournant, les pads affichent une **jauge lumineuse** de la couleur du réglage |
-| **Bande Pitch** | Fait glisser la hauteur des notes |
-| **Bande Mod** | Vibrato |
-| Pédale sustain (optionnel) | Fait tenir les notes |
+**Pads 1-8** : 💥 grosse caisse, 🥁 caisse claire, ✨ charleston, 👏 clap, 🦘 boing, 💧 goutte, 🚀 laser, 🔔 cloche.
+Chaque pad a sa couleur et flashe quand on tape.
 
-Les potards sont « appris » dans l'ordre où on les tourne la première fois (1er potard tourné = Brillance, 2e = Écho, etc.,
-puis ça boucle) et le résultat est mémorisé. Les modes absolu et relatif d'Arturia sont détectés automatiquement.
+**Rangée du haut des potards = le son du clavier**
+
+| n° | Potard | Effet |
+|---|---|---|
+| 1 | 🎹 Instrument | piano, flûte, bulle, boîte à musique, robot, chat, espace. Fait entendre l'instrument choisi, les pads en montrent la couleur |
+| 2 | ☀️ Brillance | son étouffé ↔ brillant |
+| 3 | 🦆 Wah | son « qui siffle » |
+| 4 | 〰️ Vibrato | la note tremble |
+| 5 | 🐘 Octave | grave ↔ aigu |
+| 6 | ⏳ Notes longues | les notes traînent après qu'on lâche |
+| 7 | 🏔️ Écho | écho… écho… |
+| 8 | 🦇 Grotte | réverbe |
+
+**Rangée du bas = l'accompagnement**
+
+| n° | Potard | Effet |
+|---|---|---|
+| 9 | 🥁 Rythme | tout à gauche = arrêt, puis 8 rythmes : boum-tchak, disco, hip-hop, reggae, valse, samba, marche, rigolo. Chaque rythme a sa **ligne de basse** et les pads clignotent en rythme |
+| 10 | 🐇 Vitesse | tempo (70 à 160 BPM) |
+| 11 | 🎸 Basse | volume de la basse (à gauche = pas de basse) |
+| 12 | 🔊 Batterie | volume du rythme |
+| 13 | 🎺 Gros son | 1 note → 2 octaves → accord octave + quinte |
+| 14 | 🪜 Arpège | les touches tenues se jouent une par une, en rythme (à fond = deux fois plus vite) |
+| 15 | 🐯 Grrr | distorsion |
+| 16 | 📢 Volume | volume général (ne descend pas sous 25 %, pour éviter « ça marche plus ! ») |
+
+Quand on tourne un potard, les pads affichent une **jauge lumineuse** de sa couleur.
+
+Basse et rythmes sont en **do pentatonique**, comme la « gamme magique » du clavier : tout ce que l'enfant joue
+par-dessus sonne juste.
+
+**Autres commandes**
+
+- **Bandes tactiles** : *pitch* fait glisser la hauteur des notes, *mod* ajoute du vibrato. La pédale de sustain (optionnelle) fait tenir les notes.
+- **Pads 9-16** (bouton *Pad 9-16*) : choix de l'instrument (9-15) et gamme magique on/off (16).
+  Selon la configuration du MiniLab, cette 2ᵉ banque peut ne rien faire : le potard 1 fait la même chose.
+  Pour voir ce qu'elle envoie, ouvrir le panneau parent puis taper sur un pad : la liste
+  « Derniers messages reçus » l'affiche.
 
 ## Vie de l'appli
 
-- Après **45 s** sans jeu, un chenillard de couleurs parcourt les pads pour inviter à jouer.
-- Après **10 min**, tout s'éteint (lumières + son en pause). Toucher n'importe quoi réveille avec un petit carillon.
-- **5 tapes rapides sur l'écran** affichent 8 s d'infos pour le parent (appareils détectés, réglages, bouton « Réapprendre les potards »).
+- Après **45 s** sans jeu (et sans rythme), un chenillard de couleurs parcourt les pads pour inviter à jouer.
+- Après **10 min**, tout s'éteint (lumières, son, rythme, arpège). Toucher n'importe quoi réveille avec un petit carillon.
+- **5 tapes rapides sur l'écran** : panneau parent (appareils détectés, réglages, derniers messages MIDI, apprentissage des potards).
 - Pour tester sans MiniLab sur un ordinateur : touches `A W S E D F T G Y H U J K` (position QWERTY) = clavier,
   `1`-`8` = pads (Maj + chiffre = pads 9-16).
 
 ## Personnalisation
 
 Tout est dans `index.html` (un seul fichier, sans dépendance) : constantes en haut (canal des pads, délais de veille, volume),
-listes `INSTRUMENTS`, `DRUMS` et `PARAMS` pour changer les sons, les couleurs ou les potards.
+listes `INSTRUMENTS`, `DRUMS`, `GROOVES` (rythmes et basses, faciles à écrire : numéros de pas sur 16) et `PARAMS` (potards).
 
 Si les pads jouent des notes au lieu des bruitages, vérifier dans *Arturia MIDI Control Center* que les pads envoient
 les notes 36-51 sur le canal 10 (réglage d'usine), ou adapter `PAD_CHANNEL` / `PAD_FIRST_NOTE`.
