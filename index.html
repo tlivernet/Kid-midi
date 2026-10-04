@@ -18,6 +18,7 @@
   #info { position: fixed; left: 16px; right: 16px; bottom: 16px; display: none;
     font: 14px/1.5 monospace; color: #999; white-space: pre-wrap; }
   #info button { margin: .5rem .5rem 0 0; font: inherit; background: #222; color: #ccc; border: 1px solid #444; padding: .5rem .9rem; }
+  #err { position: fixed; left: 16px; right: 40px; bottom: 10px; font: 12px monospace; color: #a33; }
   #learnbox { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; text-align: center;
     font-size: 1.6rem; line-height: 1.6; color: #ccc; background: #000; padding: 16px; }
 </style>
@@ -25,8 +26,9 @@
 <body>
 <button id="start">▶ Toucher pour démarrer<small>Kid MIDI — branche le MiniLab puis touche l'écran</small></button>
 <div id="dot"></div>
-<div id="info"><span id="infotext"></span><br><button id="learn">Apprendre les potards (1 → 16)</button><button id="close">Fermer</button></div>
+<div id="info"><span id="infotext"></span><br><button id="learn">Apprendre les potards (1 → 16)</button><button id="test">Test son</button><button id="close">Fermer</button></div>
 <div id="learnbox"></div>
+<div id="err"></div>
 
 <script>
 'use strict';
@@ -141,7 +143,7 @@ let instr = Math.min(store.get('instr', 0), INSTRUMENTS.length - 1);
 PARAMS[P.INSTR].value = (instr + 0.5) / INSTRUMENTS.length;
 let magic = store.get('magic', true);    // « gamme magique » : tout sonne juste
 let knobMap = store.get('knobs16', {});  // "canal:cc" → numéro de potard 0-15
-const knobMode = {};                     // "canal:cc" → 'abs' quand on a vu une valeur absolue
+const knobMode = {};                     // "canal:cc" → { mode, sure, last } (auto-détection, voir knobDelta)
 let learn = null;                        // { next } pendant l'apprentissage guidé
 
 let ctx, master, synthIn, drumsIn, seqBus, bassBus, shaper, filter, delayFb, delaySend, revSend, detuneSrc, lfo, lfoGain, noiseBuf;
@@ -153,6 +155,14 @@ const sustained = new Set();
 const arpNotes = [];
 let arpVel = 100;
 const lastMsgs = [];
+let lastError = '';
+function report(e) {
+  lastError = String(e && e.message || e);
+  const el = document.getElementById('err');
+  if (el) el.textContent = '⚠ ' + lastError;
+}
+addEventListener('error', e => report(e.error || e.message));
+addEventListener('unhandledrejection', e => report(e.reason));
 
 function applyParams() {
   if (!ctx) return;
@@ -171,12 +181,14 @@ function applyParams() {
   const grr = Math.round(v[P.GRR] * 20);
   if (grr !== lastGrr) {
     lastGrr = grr;
-    if (grr === 0) { shaper.curve = null; shaper.oversample = 'none'; } // désactivée = pas de calcul
-    else {
-      const k = grr * 2.5, curve = new Float32Array(1024);
-      for (let i = 0; i < curve.length; i++) { const x = i / 511.5 - 1; curve[i] = (1 + k) * x / (1 + k * Math.abs(x)); }
-      shaper.curve = curve; shaper.oversample = '2x';
-    }
+    try {
+      if (grr === 0) { shaper.curve = new Float32Array([-1, 1]); shaper.oversample = 'none'; } // ligne droite = son intact
+      else {
+        const k = grr * 2.5, curve = new Float32Array(1024);
+        for (let i = 0; i < curve.length; i++) { const x = i / 511.5 - 1; curve[i] = (1 + k) * x / (1 + k * Math.abs(x)); }
+        shaper.curve = curve; shaper.oversample = '2x';
+      }
+    } catch (e) { report(e); }
   }
 }
 
@@ -190,12 +202,15 @@ function initAudio() {
   limiter.threshold.value = -18; limiter.knee.value = 6; limiter.ratio.value = 12;
   limiter.attack.value = 0.002; limiter.release.value = 0.2;
   const trim = ctx.createGain(); trim.gain.value = 0.5;
-  const safety = ctx.createWaveShaper();
-  const sc = new Float32Array(1024);
-  for (let i = 0; i < sc.length; i++) sc[i] = Math.tanh(1.5 * (i / 511.5 - 1)) / Math.tanh(1.5);
-  safety.curve = sc;
   master = ctx.createGain();
-  master.connect(limiter).connect(trim).connect(safety).connect(ctx.destination);
+  master.connect(limiter).connect(trim);
+  try {
+    const safety = ctx.createWaveShaper();
+    const sc = new Float32Array(1024);
+    for (let i = 0; i < sc.length; i++) sc[i] = Math.tanh(1.5 * (i / 511.5 - 1)) / Math.tanh(1.5);
+    safety.curve = sc;
+    trim.connect(safety).connect(ctx.destination);
+  } catch (e) { report(e); trim.connect(ctx.destination); }
 
   const mix = ctx.createGain();
   mix.connect(master);
@@ -563,13 +578,34 @@ function onKnob(key, value) {
     knobMap[key] = free; store.set('knobs16', knobMap);
   }
   const pi = knobMap[key], p = PARAMS[pi];
-  // Auto-détection : mode absolu (0-127) ou relatif Arturia (64 ± n)
-  if (value < 56 || value > 72) knobMode[key] = 'abs';
-  if (knobMode[key] === 'abs') p.value = value / 127;
-  else p.value = Math.max(0, Math.min(1, p.value + (value - 64) * 0.02));
+  const delta = knobDelta(key, value);
+  if (delta === null) p.value = value / 127;
+  else p.value = Math.max(0, Math.min(1, p.value + delta * 0.02));
   if (pi === P.INSTR && selIndex(P.INSTR) !== instr) selectInstrument(selIndex(P.INSTR), true);
   applyParams();
   showBar(pi);
+}
+
+// Auto-détection du mode des potards. Arturia propose 4 modes :
+//   absolu 0-127, relatif #1 (64 ± n), relatif #2 (1, 2, 3… / 127, 126…), relatif #3 (16 ± n).
+// Un potard absolu n'envoie jamais deux fois de suite la même valeur ; un potard relatif le fait
+// sans arrêt (65, 65, 65… en tournant). Une répétition suffit donc à le démasquer.
+const REL = {
+  rel1: { near: v => Math.abs(v - 64) <= 12, delta: v => v - 64 },
+  rel2: { near: v => v <= 12 || v >= 116,    delta: v => v < 64 ? v : v - 128 },
+  rel3: { near: v => Math.abs(v - 16) <= 6,  delta: v => v - 16 },
+};
+const relGuess = v => Object.keys(REL).find(m => REL[m].near(v)) || null;
+// Renvoie le déplacement (potard relatif) ou null (potard absolu : utiliser la valeur telle quelle)
+function knobDelta(key, value) {
+  const k = knobMode[key] || (knobMode[key] = { mode: null, sure: false, last: -1 });
+  if (value === k.last) {                                     // répétition → relatif, c'est sûr
+    const m = relGuess(value);
+    if (m) { k.mode = m; k.sure = true; }
+  } else if (k.mode === null) k.mode = relGuess(value) || 'abs';              // 1er message : on devine
+  else if (k.mode !== 'abs' && (!k.sure || !REL[k.mode].near(value))) k.mode = 'abs'; // pas confirmé → absolu
+  k.last = value;
+  return k.mode === 'abs' ? null : REL[k.mode].delta(value);
 }
 
 // Apprentissage guidé : le parent tourne les potards dans l'ordre 1 → 16
@@ -651,8 +687,12 @@ async function initMidi() {
 }
 
 // ─── Veille ──────────────────────────────────────────────────────────────────
+function ensureRunning() {
+  if (ctx && !sleeping && ctx.state !== 'running') ctx.resume().catch(report);
+}
 function wake() {
   lastActivity = performance.now();
+  ensureRunning();
   if (!sleeping) return;
   sleeping = false;
   ctx.resume();
@@ -696,7 +736,10 @@ function renderInfo() {
   document.getElementById('infotext').textContent =
     `Entrées MIDI : ${ins}\nLumières : ${ledOut ? ledOut.name : 'MiniLab introuvable'}${sysexOK ? '' : ' (SysEx refusé)'}\n` +
     `Instrument : ${INSTRUMENTS[instr].name} · Rythme : ${g ? GROOVES[g - 1].name : 'arrêt'} · Gamme magique : ${magic ? 'oui' : 'non'}\n` +
-    `Potards appris : ${Object.keys(knobMap).length}/16\n\n` +
+    `Potards appris : ${Object.keys(knobMap).length}/16` +
+    ` (modes : ${Object.values(knobMode).map(k => k.mode || '?').join(' ') || '—'})\n` +
+    `Son : ${ctx ? `${ctx.state} · ${ctx.sampleRate} Hz · latence ${Math.round(((ctx.baseLatency || 0) + (ctx.outputLatency || 0)) * 1000)} ms` : 'non démarré'}\n` +
+    (lastError ? `Erreur : ${lastError}\n` : '') + '\n' +
     `Derniers messages reçus :\n${lastMsgs.join('\n') || '—'}`;
   if (performance.now() > infoUntil) hideInfo();
 }
@@ -714,6 +757,7 @@ function hideInfo() {
 
 let taps = [];
 function onTap() {
+  ensureRunning();
   if (learn) { stopLearn(); return; }
   const now = performance.now();
   taps = taps.filter(t => now - t < 2000).concat(now);
@@ -722,19 +766,25 @@ function onTap() {
   showInfo();
 }
 document.getElementById('learn').addEventListener('pointerdown', e => { e.stopPropagation(); hideInfo(); startLearn(); });
+document.getElementById('test').addEventListener('pointerdown', e => { e.stopPropagation(); ensureRunning(); chime(); });
 document.getElementById('close').addEventListener('pointerdown', e => { e.stopPropagation(); hideInfo(); });
+
+function chime() {
+  try { [60, 64, 67, 72].forEach((n, k) => setTimeout(() => playVoice(INSTRUMENTS[3], n + 12, 80), k * 120)); }
+  catch (e) { report(e); }
+}
 
 document.getElementById('start').addEventListener('click', async () => {
   document.getElementById('start').remove();
-  initAudio();
-  try { await document.documentElement.requestFullscreen?.(); } catch {}
+  document.addEventListener('pointerdown', onTap);
+  try { initAudio(); } catch (e) { report(e); }
+  chime();                                   // le carillon de départ = le son marche
+  try { document.documentElement.requestFullscreen?.().catch(() => {}); } catch {}
   keepAwake();
-  await initMidi();
+  try { await initMidi(); } catch (e) { report(e); }
   setInterval(renderLeds, 40);
   setInterval(checkSleep, 5000);
-  document.addEventListener('pointerdown', onTap);
   wake();
-  [60, 64, 67, 72].forEach((n, k) => setTimeout(() => playVoice(INSTRUMENTS[3], n + 12, 80), k * 120));
 });
 
 addEventListener('pagehide', () => { for (let i = 0; i < 16; i++) sendPad(i, C.off); });

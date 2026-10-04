@@ -69,6 +69,9 @@ Chaque pad a sa couleur et flashe quand on tape.
 | 16 | 📢 Volume | volume général (ne descend pas sous 25 %, pour éviter « ça marche plus ! ») |
 
 Quand on tourne un potard, les pads affichent une **jauge lumineuse** de sa couleur.
+L'appli reconnaît toute seule les potards absolus (0-127) et les trois modes relatifs d'Arturia : pas besoin de
+toucher à *MIDI Control Center*. Si un potard semble « coincé », taper 5 fois sur l'écran, le tourner, et regarder
+les lignes « CC … = … » des derniers messages reçus.
 
 Basse et rythmes sont en **do pentatonique**, comme la « gamme magique » du clavier : tout ce que l'enfant joue
 par-dessus sonne juste.
