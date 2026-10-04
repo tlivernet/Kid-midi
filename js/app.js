@@ -506,7 +506,12 @@ function toggleVariation() {
   const cur = seq.pendingPart ?? seq.part;
   const nxt = (cur + 1) % theme().parts.length;
   if (seq.running && layersOn.some(Boolean)) seq.pendingPart = nxt;   // changera à la prochaine mesure
-  else { seq.part = nxt; seq.pendingPart = null; seq.partStep = 0; }
+  else {
+    seq.part = nxt; seq.pendingPart = null; seq.partStep = 0;
+    loadBank('glockenspiel').then(() => playSample('glockenspiel', nxt ? 84 : 72, 90, ctx.currentTime, kidVol, { level: 0.5, dur: 0.4 }));
+  }
+  // les pads montrent la partie choisie : 4 pads = A, 8 pads = B
+  led.bar = { n: nxt ? 8 : 4, color: C[theme().color], until: performance.now() + 1200 };
 }
 
 // Change de tonalité (pad 7 ou boutons Octave s'ils envoient quelque chose)
@@ -528,10 +533,18 @@ function playStep(th, t, ms, stepDur) {
   const S = (i) => layersOn[i];
 
   drumDest = layerFx[0].in;
-  if (S(0)) for (const [v, pat] of Object.entries(th.drumPats)) {
-    const e = pat[seq.step % pat.length];
-    if (e) DRUM_VOICES[v](t, e.vel, th);
+  const fill = seq.pendingPart !== null && bp >= th.bar - 4;          // dernier temps avant de changer de partie
+  if (S(0) && fill) {
+    DRUM_VOICES[bp < th.bar - 2 ? 'tom1' : 'tom2'](t, 0.9, th);       // roulement de toms
+    if (bp === th.bar - 1) DRUM_VOICES.snare(t, 1, th);
+  } else if (S(0)) {
+    for (const [v, pat] of Object.entries(th.drumPats)) {
+      const e = pat[seq.step % pat.length];
+      if (e) DRUM_VOICES[v](t, e.vel, th);
+    }
+    if (seq.part === 1 && seq.step % 2 === 1) DRUM_VOICES.hat(t, 0.4, th); // partie B : charleston plus chargé
   }
+  if (S(0) && seq.partStep === 0 && seq.switched) { DRUM_VOICES.crash(t, 1, th); seq.switched = false; }
   drumDest = layerFx[1].in;
   if (S(1)) for (const [v, pat] of Object.entries(th.percPats)) {
     const e = pat[seq.step % pat.length];
@@ -549,7 +562,7 @@ function playStep(th, t, ms, stepDur) {
   if (S(4)) {
     const e = part.melAt[ps];
     if (e) {
-      playSample(th.melody.inst, e.note + KEYS[seq.key], 110, t, layerFx[4].in,
+      playSample(th.melody.inst, e.note + KEYS[seq.key] + (seq.part === 1 ? 12 : 0), 110, t, layerFx[4].in,
         { level: (th.melody.level ?? 0.6) * LAYER_GAIN.melody, dur: e.dur * stepDur * 0.92, release: 0.15 });
     }
   }
@@ -593,7 +606,7 @@ function seqTick() {
   while (seq.next < ctx.currentTime + 0.12) {
     // changement de partie (pad 7) au début d'une mesure
     if (seq.pendingPart !== null && seq.partStep % th.bar === 0) {
-      seq.part = seq.pendingPart; seq.pendingPart = null; seq.partStep = 0;
+      seq.part = seq.pendingPart; seq.pendingPart = null; seq.partStep = 0; seq.switched = true;
     }
     if (seq.pendingKey !== null && seq.partStep % th.bar === 0) { seq.key = seq.pendingKey; seq.pendingKey = null; }
     const swing = (seq.step % 2) ? (th.swing || 0) * stepDur : 0;

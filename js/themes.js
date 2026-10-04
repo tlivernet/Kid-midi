@@ -9,6 +9,10 @@
 //   accords   « symbole:durée » (C, Am, G7, Fmaj7, Dm7…), durée en double-croches
 //   arpège    chiffres = n° de note de l'accord en partant du grave (0, 1, 2… 4 = fondamentale +1 octave)
 //
+// Partie B (clic sur le potard 9) : en plus de ses accords et de sa mélodie, elle joue la mélodie
+// une octave plus haut et la batterie plus chargée ; le passage A ↔ B est annoncé par un roulement
+// de toms puis une cymbale.
+//
 // Toutes les chansons sont en do majeur / la mineur : la « gamme magique » du clavier
 // (do pentatonique) va avec toutes.
 
@@ -54,8 +58,8 @@ const THEMES = [
     parts: [
       { chords: 'C:16 G:16 Am:8 F:8 C:8 G:8',
         melody: 'E5:4 E5:4 F5:4 G5:4 G5:4 F5:4 E5:4 D5:4 C5:4 C5:4 D5:4 E5:4 E5:6 D5:2 D5:8' },
-      { chords: 'C:16 G:16 Am:8 F:8 G:8 C:8',
-        melody: 'E5:4 E5:4 F5:4 G5:4 G5:4 F5:4 E5:4 D5:4 C5:4 C5:4 D5:4 E5:4 D5:6 C5:2 C5:8' },
+      { chords: 'G:16 G:8 C:8 G:8 Am:8 C:8 G:8',
+        melody: 'D5:4 D5:4 E5:4 C5:4 D5:4 E5:2 F5:2 E5:4 C5:4 D5:4 E5:2 F5:2 E5:4 D5:4 C5:4 D5:4 G4:8' },
     ],
   },
   {

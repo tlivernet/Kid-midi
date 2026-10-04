@@ -51,7 +51,8 @@ Régler le volume max sur l'enceinte : l'appli a déjà un limiteur, mais c'est 
 La 2ᵉ banque de pads fait exactement la même chose.
 
 **Les thèmes** (tourner le potard 9) : 9 chansons du domaine public, chacune dans un style.
-**Clic sur le potard 9** = autre mélodie (passe à l'autre partie de la chanson, à la mesure suivante).
+**Clic sur le potard 9** = autre mélodie : roulement de toms, cymbale, et on passe à l'autre partie de la chanson
+(partie B : autre mélodie, une octave plus haut, batterie plus chargée). Les pads montrent la partie : 4 pads = A, 8 pads = B.
 
 | Thème | Chanson | Style |
 |---|---|---|
