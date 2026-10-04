@@ -50,9 +50,9 @@ Régler le volume max sur l'enceinte : l'appli a déjà un limiteur, mais c'est 
 
 La 2ᵉ banque de pads fait exactement la même chose.
 
-**Les thèmes** (tourner le potard 9) : 9 chansons du domaine public, chacune dans un style.
-**Clic sur le potard 9** = autre mélodie : roulement de toms, cymbale, et on passe à l'autre partie de la chanson
-(partie B : autre mélodie, une octave plus haut, batterie plus chargée). Les pads montrent la partie : 4 pads = A, 8 pads = B.
+**Les morceaux** : **clic sur le potard 9** = morceau suivant (la musique démarre tout de suite) ; tourner le potard 9
+les fait défiler aussi. Chaque morceau se joue en entier, partie A puis partie B (mélodie plus aiguë, batterie plus chargée),
+avec un roulement de toms et une cymbale à chaque passage. 9 chansons du domaine public, chacune dans un style :
 
 | Thème | Chanson | Style |
 |---|---|---|
@@ -78,7 +78,7 @@ Tous les sons sont de vrais instruments enregistrés (banque FluidR3 GM) et de v
 
 | | Rangée du haut = le clavier | | Rangée du bas = la musique |
 |---|---|---|---|
-| 1 | 🎹 Instrument (clic = suivant) | 9 | 🎵 Thème (clic = autre mélodie) |
+| 1 | 🎹 Instrument (clic = suivant) | 9 | 🎵 Morceau (clic = suivant) |
 | 2 | 🔉 Volume du clavier | 10 | 🐇 Vitesse |
 | 3 | ☀️ Brillance | 11 | 🎶 Volume de la musique |
 | 4 | 🦆 Wah | 12 | 🥁 Volume de la batterie |
@@ -109,7 +109,7 @@ le panneau parent affiche les derniers messages MIDI reçus.
   boutons « Apprendre les potards », « Gamme magique » on/off, « Test son », « Latence ».
 - Hors-ligne : après la première utilisation avec Internet, tous les sons sont gardés sur la tablette.
 - Pour tester sans MiniLab sur un ordinateur : `A W S E D F T G Y H U J K` = clavier, `1`-`8` = pads,
-  `N` = instrument suivant, `M` = autre mélodie, `,` / `.` = tonalité − / +.
+  `N` = instrument suivant, `M` = morceau suivant, `,` / `.` = tonalité − / +.
 
 ## Si le son arrive en retard
 

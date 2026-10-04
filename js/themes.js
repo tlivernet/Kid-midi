@@ -9,9 +9,8 @@
 //   accords   « symbole:durée » (C, Am, G7, Fmaj7, Dm7…), durée en double-croches
 //   arpège    chiffres = n° de note de l'accord en partant du grave (0, 1, 2… 4 = fondamentale +1 octave)
 //
-// Partie B (clic sur le potard 9) : en plus de ses accords et de sa mélodie, elle joue la mélodie
-// une octave plus haut et la batterie plus chargée ; le passage A ↔ B est annoncé par un roulement
-// de toms puis une cymbale.
+// Chaque chanson a deux parties (A puis B, en boucle). La partie B joue la mélodie une octave plus
+// haut et la batterie plus chargée ; le passage est annoncé par un roulement de toms puis une cymbale.
 //
 // Toutes les chansons sont en do majeur / la mineur : la « gamme magique » du clavier
 // (do pentatonique) va avec toutes.

@@ -10,7 +10,7 @@ const LATENCY = (() => { try { return localStorage.getItem('kidmidi.latency') ==
 const MASTER_LEVEL = 0.8;
 const ATTRACT_AFTER_MS = 45 * 1000;    // chenillard lumineux après 45 s sans jeu
 const SLEEP_AFTER_MS = 10 * 60 * 1000; // dodo (lumières éteintes, son en pause) après 10 min
-const DEFAULT_CLICKS = { '0:113': 'instr', '0:115': 'melody' }; // clics des potards 1 et 9 (réglage d'usine supposé)
+const DEFAULT_CLICKS = { '0:113': 'instr', '0:115': 'song' }; // clics des potards 1 et 9 (réglage d'usine supposé)
 
 // Couleurs des pads du MiniLab mkII (codes SysEx)
 const C = { off: 0x00, red: 0x01, green: 0x04, yellow: 0x05, blue: 0x10, magenta: 0x11, cyan: 0x14, white: 0x7f };
@@ -59,8 +59,8 @@ setSel(P.INSTR, instr);
 setSel(P.THEME, themeIdx);
 let magic = store.get('magic', true);    // « gamme magique » : tout sonne juste
 let knobMap = store.get('knobs16', {});  // "canal:cc" → numéro de potard 0-15
-let clickMap = store.get('clicks', DEFAULT_CLICKS); // "canal:cc" → 'instr' | 'melody' | 'keyDown' | 'keyUp'
-for (const k in clickMap) if (clickMap[k] === 'theme') clickMap[k] = 'melody'; // ancien réglage : le clic 9 changeait de thème
+let clickMap = store.get('clicks', DEFAULT_CLICKS); // "canal:cc" → 'instr' | 'song' | 'keyDown' | 'keyUp'
+for (const k in clickMap) if (clickMap[k] === 'theme' || clickMap[k] === 'melody') clickMap[k] = 'song'; // anciens noms
 const knobMode = {};                     // "canal:cc" → { mode, sure, last } (auto-détection, voir knobDelta)
 const clickState = {};
 let learn = null;                        // { next, seen } pendant l'apprentissage guidé
@@ -463,7 +463,7 @@ function themeBanks(th) {
 const layersOn = [false, false, false, false, false, false];
 const layerVol = store.get('layerVol', [1, 1, 1, 1, 1, 1]); // volume de chaque couche (pad maintenu + potard)
 const LAYER_GAIN = { bass: 1, chords: 1.8, melody: 2, ambiance: 1.4 }; // équilibre mesuré entre couches
-const seq = { running: false, step: 0, partStep: 0, part: 0, pendingPart: null, key: 0, pendingKey: null, next: 0 };
+const seq = { running: false, step: 0, partStep: 0, part: 0, switched: false, key: 0, pendingKey: null, next: 0 };
 const transposed = c => ({ root: (c.root + KEYS[seq.key] + 12) % 12, iv: c.iv });
 const theme = () => THEMES[themeIdx];
 
@@ -475,7 +475,7 @@ function setTheme(i, fromKnob) {
   const need = themeBanks(th);
   need.add(KID_INSTRUMENTS[instr].inst);
   trimBanks(need);
-  seq.part = 0; seq.pendingPart = null; seq.partStep = 0; seq.step = 0;
+  seq.part = 0; seq.partStep = 0; seq.step = 0;
   Promise.all([...need].map(loadBank)).then(() => {
     if (!layersOn.some(Boolean)) layersOn.fill(true); // changer de thème = on l'entend tout de suite
     startClock();
@@ -487,7 +487,6 @@ function startClock() {
   if (seq.running || !ctx) return;
   seq.running = true;
   seq.step = 0; seq.partStep = 0;
-  if (seq.pendingPart !== null) { seq.part = seq.pendingPart; seq.pendingPart = null; }
   if (seq.pendingKey !== null) { seq.key = seq.pendingKey; seq.pendingKey = null; }
   seq.next = ctx.currentTime + 0.08;
 }
@@ -502,17 +501,6 @@ function togglePlay() {
   else { layersOn.fill(true); startClock(); }
 }
 
-function toggleVariation() {
-  const cur = seq.pendingPart ?? seq.part;
-  const nxt = (cur + 1) % theme().parts.length;
-  if (seq.running && layersOn.some(Boolean)) seq.pendingPart = nxt;   // changera à la prochaine mesure
-  else {
-    seq.part = nxt; seq.pendingPart = null; seq.partStep = 0;
-    loadBank('glockenspiel').then(() => playSample('glockenspiel', nxt ? 84 : 72, 90, ctx.currentTime, kidVol, { level: 0.5, dur: 0.4 }));
-  }
-  // les pads montrent la partie choisie : 4 pads = A, 8 pads = B
-  led.bar = { n: nxt ? 8 : 4, color: C[theme().color], until: performance.now() + 1200 };
-}
 
 // Change de tonalité (pad 7 ou boutons Octave s'ils envoient quelque chose)
 function changeKey(dir) {
@@ -533,7 +521,7 @@ function playStep(th, t, ms, stepDur) {
   const S = (i) => layersOn[i];
 
   drumDest = layerFx[0].in;
-  const fill = seq.pendingPart !== null && bp >= th.bar - 4;          // dernier temps avant de changer de partie
+  const fill = th.parts.length > 1 && ps >= part.len - 4;           // dernier temps avant l'autre partie
   if (S(0) && fill) {
     DRUM_VOICES[bp < th.bar - 2 ? 'tom1' : 'tom2'](t, 0.9, th);       // roulement de toms
     if (bp === th.bar - 1) DRUM_VOICES.snare(t, 1, th);
@@ -605,8 +593,9 @@ function seqTick() {
   if (seq.next < ctx.currentTime - 0.05) seq.next = ctx.currentTime + 0.02;
   while (seq.next < ctx.currentTime + 0.12) {
     // changement de partie (pad 7) au début d'une mesure
-    if (seq.pendingPart !== null && seq.partStep % th.bar === 0) {
-      seq.part = seq.pendingPart; seq.pendingPart = null; seq.partStep = 0; seq.switched = true;
+    // la chanson se joue en entier : partie A, partie B, A, B…
+    if (seq.partStep >= th.parsedParts[seq.part].len) {
+      seq.part = (seq.part + 1) % th.parsedParts.length; seq.partStep = 0; seq.switched = true;
     }
     if (seq.pendingKey !== null && seq.partStep % th.bar === 0) { seq.key = seq.pendingKey; seq.pendingKey = null; }
     const swing = (seq.step % 2) ? (th.swing || 0) * stepDur : 0;
@@ -757,7 +746,7 @@ function onKnob(key, value) {
   applyParams();
 }
 
-// Boutons : clic potard 1 = instrument suivant, clic potard 9 = autre mélodie, Octave −/+ = tonalité
+// Boutons : clic potard 1 = instrument suivant, clic potard 9 = morceau suivant, Octave −/+ = tonalité
 // (si le MiniLab les envoie). Accepte boutons momentanés et bascules.
 function onClick(key, value) {
   const s = clickState[key] || (clickState[key] = { at: 0 });
@@ -766,7 +755,7 @@ function onClick(key, value) {
   s.at = now;
   const action = clickMap[key];
   if (action === 'instr') selectInstrument(instr + 1);
-  else if (action === 'melody') toggleVariation();
+  else if (action === 'song') setTheme(themeIdx + 1);
   else if (action === 'keyDown') changeKey(-1);
   else if (action === 'keyUp') changeKey(+1);
 }
@@ -774,7 +763,7 @@ function onClick(key, value) {
 // Apprentissage guidé : 16 potards dans l'ordre, les clics des potards 1 et 9, puis Octave − et +
 const LEARN_BUTTONS = [
   { action: 'instr',   text: 'Clique (appuie) sur le potard n°1', what: '🎹 Instrument suivant' },
-  { action: 'melody',  text: 'Clique (appuie) sur le potard n°9', what: '🔀 Autre mélodie' },
+  { action: 'song',    text: 'Clique (appuie) sur le potard n°9', what: '🎵 Morceau suivant' },
   { action: 'keyDown', text: 'Appuie sur le bouton Octave −',     what: '🎼 Tonalité plus grave\n(si rien ne se passe : ce bouton n\'envoie rien, touche l\'écran)' },
   { action: 'keyUp',   text: 'Appuie sur le bouton Octave +',     what: '🎼 Tonalité plus aiguë\n(si rien ne se passe : touche l\'écran)' },
 ];
@@ -914,7 +903,7 @@ addEventListener('keydown', e => {
   const m = /^Digit([1-8])$/.exec(e.code);
   if (m) fake([0x90 | PAD_CHANNEL, PAD_FIRST_NOTE + (+m[1] - 1), 100]);
   if (e.code === 'KeyN') selectInstrument(instr + 1);
-  if (e.code === 'KeyM') toggleVariation();
+  if (e.code === 'KeyM') setTheme(themeIdx + 1);
   if (e.code === 'Comma') changeKey(-1);
   if (e.code === 'Period') changeKey(+1);
 });
