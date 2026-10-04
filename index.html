@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<title>Kid MIDI</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #777; overflow: hidden;
+    font-family: system-ui, sans-serif; user-select: none; -webkit-user-select: none; touch-action: manipulation; }
+  #start { position: fixed; inset: 0; width: 100%; border: 0; background: #000; color: #ddd;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1rem; font-size: 2rem; }
+  #start small { font-size: 1rem; color: #777; }
+  #dot { position: fixed; right: 14px; bottom: 14px; width: 8px; height: 8px; border-radius: 50%; background: #300; }
+  #dot.ok { background: #032; }
+  #info { position: fixed; left: 16px; right: 16px; bottom: 16px; display: none;
+    font: 14px/1.5 monospace; color: #999; white-space: pre-wrap; }
+  #info button { margin-top: .5rem; font: inherit; background: #222; color: #ccc; border: 1px solid #444; padding: .4rem .8rem; }
+</style>
+</head>
+<body>
+<button id="start">▶ Toucher pour démarrer<small>Kid MIDI — branche le MiniLab puis touche l'écran</small></button>
+<div id="dot"></div>
+<div id="info"><span id="infotext"></span><br><button id="reset">Réapprendre les potards</button></div>
+
+<script>
+'use strict';
+
+// ─── Réglages ────────────────────────────────────────────────────────────────
+const PAD_CHANNEL = 9;          // canal 10 (0-indexé) : canal d'usine des pads du MiniLab mkII
+const PAD_FIRST_NOTE = 36;      // pads 1-8 → notes 36-43, pads 9-16 → notes 44-51
+const MAX_VOICES = 10;          // limite pour quand on tape avec les deux mains
+const MASTER_LEVEL = 0.8;
+const ATTRACT_AFTER_MS = 45 * 1000;    // chenillard lumineux après 45 s sans jeu
+const SLEEP_AFTER_MS = 10 * 60 * 1000; // dodo (lumières éteintes, son en pause) après 10 min
+
+// Couleurs disponibles pour les pads du MiniLab mkII (codes SysEx)
+const C = { off: 0x00, red: 0x01, green: 0x04, yellow: 0x05, blue: 0x10, magenta: 0x11, cyan: 0x14, white: 0x7f };
+const RAINBOW = [C.red, C.yellow, C.green, C.cyan, C.blue, C.magenta, C.white];
+
+// ─── État ────────────────────────────────────────────────────────────────────
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('kidmidi.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('kidmidi.' + k, JSON.stringify(v)); } catch {} },
+};
+let instr = store.get('instr', 0);
+let magic = store.get('magic', true);   // « gamme magique » : tout sonne juste
+let knobMap = store.get('knobs', {});    // "canal:cc" → numéro de paramètre (appris au premier usage)
+const knobMode = {};                     // "canal:cc" → 'abs' | 'rel' | undefined (auto-détection)
+
+let ctx, synthIn, drumsIn, filter, delay, delayFb, delaySend, revSend, detuneSrc, lfo, lfoGain, noiseBuf;
+let midiAccess = null, ledOut = null, sysexOK = false;
+let sustain = false, modWheel = 0;
+let lastActivity = performance.now(), sleeping = false;
+const voices = [];          // { note, v }
+const sustained = new Set();
+
+// ─── Paramètres des potards ──────────────────────────────────────────────────
+const PARAMS = [
+  { name: 'Brillance',     color: C.yellow,  value: 0.75 },
+  { name: 'Écho',          color: C.cyan,    value: 0.15 },
+  { name: 'Grotte',        color: C.blue,    value: 0.30 },
+  { name: 'Vibrato',       color: C.magenta, value: 0.00 },
+  { name: 'Octave',        color: C.green,   value: 0.50 },
+  { name: 'Wah',           color: C.red,     value: 0.10 },
+  { name: 'Notes longues', color: C.white,   value: 0.30 },
+  { name: 'Rythme',        color: C.yellow,  value: 0.00 },
+];
+const P = { BRIGHT: 0, ECHO: 1, CAVE: 2, VIBRATO: 3, OCTAVE: 4, WAH: 5, LONG: 6, RHYTHM: 7 };
+const octaveShift = () => Math.round((PARAMS[P.OCTAVE].value - 0.5) * 4) * 12;
+
+function applyParams() {
+  if (!ctx) return;
+  const t = ctx.currentTime, v = PARAMS.map(p => p.value);
+  filter.frequency.setTargetAtTime(200 * Math.pow(90, v[P.BRIGHT]), t, 0.03);
+  filter.Q.setTargetAtTime(0.5 + v[P.WAH] * 14, t, 0.03);
+  delaySend.gain.setTargetAtTime(v[P.ECHO] * 0.7, t, 0.05);
+  delayFb.gain.setTargetAtTime(0.2 + v[P.ECHO] * 0.5, t, 0.05);
+  revSend.gain.setTargetAtTime(v[P.CAVE] * 1.2, t, 0.05);
+  const vib = Math.max(v[P.VIBRATO], modWheel);
+  lfoGain.gain.setTargetAtTime(vib * 80, t, 0.05);
+  lfo.frequency.setTargetAtTime(4 + vib * 4, t, 0.05);
+}
+
+// ─── Moteur audio ────────────────────────────────────────────────────────────
+function initAudio() {
+  ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+
+  const limiter = ctx.createDynamicsCompressor();
+  limiter.threshold.value = -10; limiter.knee.value = 6; limiter.ratio.value = 12;
+  limiter.attack.value = 0.003; limiter.release.value = 0.25;
+  const master = ctx.createGain();
+  master.gain.value = MASTER_LEVEL;
+  master.connect(limiter).connect(ctx.destination);
+
+  const mix = ctx.createGain();
+  mix.connect(master);
+
+  // Écho
+  delay = ctx.createDelay(2); delay.delayTime.value = 0.33;
+  delayFb = ctx.createGain();
+  delaySend = ctx.createGain();
+  const delayTone = ctx.createBiquadFilter(); delayTone.type = 'lowpass'; delayTone.frequency.value = 3000;
+  mix.connect(delaySend).connect(delay).connect(delayTone);
+  delayTone.connect(delayFb).connect(delay);
+  delayTone.connect(master);
+
+  // Réverbe « grotte » (réponse impulsionnelle générée)
+  const conv = ctx.createConvolver();
+  const len = Math.floor(ctx.sampleRate * 2.8), ir = ctx.createBuffer(2, len, ctx.sampleRate);
+  for (let c = 0; c < 2; c++) {
+    const d = ir.getChannelData(c);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
+  }
+  conv.buffer = ir;
+  revSend = ctx.createGain();
+  mix.connect(revSend).connect(conv).connect(master);
+
+  // Synthé clavier → filtre global ; percussions directement dans le mix
+  filter = ctx.createBiquadFilter(); filter.type = 'lowpass';
+  synthIn = ctx.createGain();
+  synthIn.connect(filter).connect(mix);
+  drumsIn = ctx.createGain();
+  drumsIn.connect(mix);
+
+  // Pitch bend + vibrato partagés par toutes les voix (branchés sur osc.detune)
+  detuneSrc = ctx.createConstantSource(); detuneSrc.offset.value = 0; detuneSrc.start();
+  lfo = ctx.createOscillator(); lfo.frequency.value = 5;
+  lfoGain = ctx.createGain(); lfoGain.gain.value = 0;
+  lfo.connect(lfoGain); lfo.start();
+
+  noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+  const nd = noiseBuf.getChannelData(0);
+  for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+
+  applyParams();
+  setInterval(seqTick, 25);
+}
+
+const mtof = n => 440 * Math.pow(2, (n - 69) / 12);
+
+// ─── Instruments du clavier (pads 9-15) ─────────────────────────────────────
+const INSTRUMENTS = [
+  { name: 'Piano', color: C.white, level: 0.5, a: 0.005, d: 1.2, s: 0, r: 0.3,
+    partials: [{ type: 'triangle', ratio: 1, gain: 0.6 }, { ratio: 2, gain: 0.25 }, { ratio: 3, gain: 0.08 }],
+    lp: { from: 6000, to: 1500, time: 0.8 } },
+  { name: 'Flûte', color: C.cyan, level: 0.4, a: 0.06, d: 0.2, s: 0.8, r: 0.25,
+    partials: [{ ratio: 1, gain: 0.6 }, { ratio: 2, gain: 0.2 }, { type: 'triangle', ratio: 1, gain: 0.15, detune: 6 }] },
+  { name: 'Bulle', color: C.green, level: 0.5, a: 0.003, d: 0.4, s: 0, r: 0.2,
+    partials: [{ type: 'square', ratio: 1, gain: 0.35 }],
+    lp: { from: 4000, to: 400, time: 0.25, q: 8 } },
+  { name: 'Boîte à musique', color: C.magenta, level: 0.45, a: 0.002, d: 1.5, s: 0, r: 0.5, octave: 12,
+    partials: [{ ratio: 1, gain: 0.6 }, { ratio: 4, gain: 0.1 }],
+    fm: { ratio: 3.5, index: 2, decay: 0.3 } },
+  { name: 'Robot', color: C.red, level: 0.45, a: 0.005, d: 0.3, s: 0.6, r: 0.15, octave: -12,
+    partials: [{ type: 'sawtooth', ratio: 1, gain: 0.35 }, { type: 'square', ratio: 0.5, gain: 0.25 }],
+    lp: { from: 2500, to: 600, time: 0.3, q: 5 } },
+  { name: 'Chat', color: C.yellow, level: 0.5, a: 0.03, d: 0.5, s: 0, r: 0.2,
+    partials: [{ type: 'sawtooth', ratio: 1, gain: 0.4 }],
+    pitch: [[0, 0.8], [0.12, 1.1], [0.4, 0.85]],
+    lp: { from: 800, to: 2500, time: 0.15, q: 6 } },
+  { name: 'Espace', color: C.blue, level: 0.4, a: 0.01, d: 0.6, s: 0.3, r: 0.4,
+    partials: [{ type: 'square', ratio: 1, gain: 0.25 }, { ratio: 1.01, gain: 0.3 }],
+    pitch: [[0, 2], [0.3, 1]] },
+];
+const MAGIC_PAD = 15; // pad 16 : gamme magique on/off
+
+function playVoice(spec, note, vel) {
+  const t = ctx.currentTime, f = mtof(note);
+  const out = ctx.createGain(); out.gain.value = 0;
+  out.connect(synthIn);
+  let dest = out;
+  if (spec.lp) {
+    const vf = ctx.createBiquadFilter(); vf.type = 'lowpass'; vf.Q.value = spec.lp.q || 1;
+    vf.frequency.setValueAtTime(spec.lp.from, t);
+    vf.frequency.exponentialRampToValueAtTime(spec.lp.to, t + spec.lp.time);
+    vf.connect(out); dest = vf;
+  }
+  const oscs = [];
+  let modGain = null;
+  if (spec.fm) {
+    const mod = ctx.createOscillator(); mod.frequency.value = f * spec.fm.ratio;
+    modGain = ctx.createGain();
+    modGain.gain.setValueAtTime(f * spec.fm.index, t);
+    modGain.gain.exponentialRampToValueAtTime(f * spec.fm.index * 0.01, t + spec.fm.decay);
+    mod.connect(modGain); oscs.push(mod);
+  }
+  for (const p of spec.partials) {
+    const o = ctx.createOscillator(); o.type = p.type || 'sine';
+    const base = f * (p.ratio || 1);
+    if (spec.pitch) {
+      o.frequency.setValueAtTime(base * spec.pitch[0][1], t);
+      for (const [dt, r] of spec.pitch.slice(1)) o.frequency.exponentialRampToValueAtTime(base * r, t + dt);
+    } else o.frequency.value = base;
+    if (p.detune) o.detune.value = p.detune;
+    detuneSrc.connect(o.detune);
+    lfoGain.connect(o.detune);
+    if (modGain) modGain.connect(o.frequency);
+    const g = ctx.createGain(); g.gain.value = p.gain;
+    o.connect(g).connect(dest);
+    oscs.push(o);
+  }
+  const peak = spec.level * (0.35 + 0.65 * vel / 127);
+  out.gain.setValueAtTime(0, t);
+  out.gain.linearRampToValueAtTime(peak, t + spec.a);
+  out.gain.setTargetAtTime(spec.s * peak, t + spec.a, spec.d / 3);
+  oscs.forEach(o => o.start(t));
+
+  const v = { oscs, out, modGain, released: false, stopAt: null };
+  if (spec.s === 0) stopVoiceAt(v, t + spec.a + spec.d * 2 + 0.05);
+  oscs[0].onended = () => {
+    for (const o of oscs) {
+      try { detuneSrc.disconnect(o.detune); } catch {}
+      try { lfoGain.disconnect(o.detune); } catch {}
+    }
+    if (modGain) modGain.disconnect();
+    out.disconnect();
+    const i = voices.findIndex(x => x.v === v);
+    if (i >= 0) voices.splice(i, 1);
+  };
+  return v;
+}
+
+function stopVoiceAt(v, end) {
+  if (v.stopAt !== null && v.stopAt <= end) return;
+  v.stopAt = end;
+  v.oscs.forEach(o => { try { o.stop(end); } catch {} });
+}
+
+function releaseVoice(v, rel) {
+  if (v.released) return;
+  v.released = true;
+  const t = ctx.currentTime, g = v.out.gain;
+  if (g.cancelAndHoldAtTime) g.cancelAndHoldAtTime(t);
+  else { g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); }
+  g.setTargetAtTime(0, t, rel / 4);
+  stopVoiceAt(v, t + rel + 0.05);
+}
+
+// « Gamme magique » : on ramène chaque touche sur la pentatonique de do → impossible de jouer faux
+const PENTA = [0, 0, 2, 2, 4, 4, 7, 7, 7, 9, 9, 12];
+const snap = n => n - (n % 12) + PENTA[n % 12];
+
+function keyOn(note, vel) {
+  const spec = INSTRUMENTS[instr];
+  const n = Math.max(12, Math.min(115, (magic ? snap(note) : note) + (spec.octave || 0) + octaveShift()));
+  if (voices.length >= MAX_VOICES) releaseVoice(voices[0].v, 0.05);
+  voices.push({ note, v: playVoice(spec, n, vel) });
+  flash(note % 8, spec.color, 200);
+}
+
+function keyOff(note) {
+  const rel = INSTRUMENTS[instr].r * (0.3 + 3.7 * PARAMS[P.LONG].value);
+  for (const x of voices) {
+    if (x.note !== note || x.v.released) continue;
+    if (sustain) sustained.add(x.v); else releaseVoice(x.v, rel);
+  }
+}
+
+// ─── Percussions et bruitages (pads 1-8) ─────────────────────────────────────
+function envExp(g, t, peak, decay) {
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(peak, t + 0.003);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + decay);
+}
+function osc(type, f, t, dur) {
+  const o = ctx.createOscillator(); o.type = type; o.frequency.setValueAtTime(f, t);
+  o.start(t); o.stop(t + dur + 0.05); return o;
+}
+function noise(t, dur) {
+  const s = ctx.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+  s.start(t, Math.random() * 0.5); s.stop(t + dur + 0.05); return s;
+}
+function biquad(type, f, q = 1) {
+  const b = ctx.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; return b;
+}
+const gain = () => ctx.createGain();
+const wobble = () => 1 + (Math.random() - 0.5) * 0.06; // chaque coup est un peu différent
+
+const DRUMS = [
+  { name: 'Grosse caisse', color: C.red, play(t, a) {
+    const o = osc('sine', 150 * wobble(), t, 0.5), g = gain();
+    o.frequency.exponentialRampToValueAtTime(42, t + 0.12);
+    envExp(g, t, a, 0.45); o.connect(g).connect(drumsIn);
+  } },
+  { name: 'Caisse claire', color: C.yellow, play(t, a) {
+    const g = gain(); envExp(g, t, 0.7 * a, 0.2);
+    noise(t, 0.25).connect(biquad('highpass', 1500)).connect(g).connect(drumsIn);
+    const g2 = gain(); envExp(g2, t, 0.4 * a, 0.1);
+    osc('triangle', 190 * wobble(), t, 0.12).connect(g2).connect(drumsIn);
+  } },
+  { name: 'Charleston', color: C.cyan, play(t, a) {
+    const g = gain(); envExp(g, t, 0.35 * a, 0.06);
+    noise(t, 0.08).connect(biquad('highpass', 7000)).connect(g).connect(drumsIn);
+  } },
+  { name: 'Clap', color: C.magenta, play(t, a) {
+    const g = gain();
+    g.gain.setValueAtTime(0.0001, t);
+    for (let i = 0; i < 3; i++) {
+      const tt = t + i * 0.012;
+      g.gain.setValueAtTime(a, tt); g.gain.exponentialRampToValueAtTime(0.05, tt + 0.01);
+    }
+    g.gain.setValueAtTime(0.8 * a, t + 0.036); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+    noise(t, 0.32).connect(biquad('bandpass', 1100, 1.2)).connect(g).connect(drumsIn);
+  } },
+  { name: 'Boing', color: C.green, play(t, a) {
+    const o = osc('sine', 110 * wobble(), t, 0.7), g = gain();
+    o.frequency.exponentialRampToValueAtTime(330, t + 0.35);
+    const l = osc('sine', 14, t, 0.7), lg = gain(); lg.gain.value = 25;
+    l.connect(lg).connect(o.frequency);
+    envExp(g, t, 0.6 * a, 0.7); o.connect(g).connect(drumsIn);
+  } },
+  { name: 'Goutte', color: C.blue, play(t, a) {
+    const o = osc('sine', 500 * wobble(), t, 0.2), g = gain();
+    o.frequency.exponentialRampToValueAtTime(1700 * wobble(), t + 0.07);
+    envExp(g, t, 0.5 * a, 0.18); o.connect(g).connect(drumsIn);
+  } },
+  { name: 'Laser', color: C.white, play(t, a) {
+    const o = osc('square', 2000 * wobble(), t, 0.4), g = gain();
+    o.frequency.exponentialRampToValueAtTime(100, t + 0.4);
+    envExp(g, t, 0.25 * a, 0.4); o.connect(biquad('lowpass', 2500)).connect(g).connect(drumsIn);
+  } },
+  { name: 'Cloche', color: C.yellow, play(t, a) {
+    const f = 523 * wobble(), o = osc('sine', f, t, 2), m = osc('sine', f * 1.41, t, 2), mg = gain(), g = gain();
+    mg.gain.setValueAtTime(f * 3, t); mg.gain.exponentialRampToValueAtTime(f * 0.1, t + 1.5);
+    m.connect(mg).connect(o.frequency);
+    envExp(g, t, 0.4 * a, 2); o.connect(g).connect(drumsIn);
+  } },
+];
+
+function padOn(i, vel) {
+  const a = 0.4 + 0.6 * vel / 127;
+  if (i < 8) {
+    DRUMS[i].play(ctx.currentTime, a);
+    flash(i, DRUMS[i].color === C.white ? C.off : C.white, 150);
+  } else if (i === MAGIC_PAD) {
+    magic = !magic; store.set('magic', magic);
+    const notes = magic ? [72, 76, 79, 84] : [84, 79, 76, 72];
+    notes.forEach((n, k) => setTimeout(() => playVoice(INSTRUMENTS[3], n, 90), k * 90));
+  } else if (i - 8 < INSTRUMENTS.length) {
+    instr = i - 8; store.set('instr', instr);
+    playVoice(INSTRUMENTS[instr], 60 + (INSTRUMENTS[instr].octave || 0), 100);
+    flash(i, C.white, 150);
+  }
+}
+
+// ─── Boîte à rythme (potard « Rythme ») ──────────────────────────────────────
+const seq = { on: false, step: 0, next: 0 };
+function seqTick() {
+  if (!ctx || ctx.state !== 'running') return;
+  const p = PARAMS[P.RHYTHM].value;
+  if (p < 0.05) { seq.on = false; return; }
+  if (!seq.on) { seq.on = true; seq.step = 0; seq.next = ctx.currentTime + 0.05; }
+  const stepDur = 60 / (70 + p * 110) / 4;
+  if (seq.next < ctx.currentTime - 0.05) seq.next = ctx.currentTime + 0.02;
+  while (seq.next < ctx.currentTime + 0.12) {
+    const s = seq.step, t = seq.next, ms = Math.max(0, (t - ctx.currentTime) * 1000);
+    if (s === 0 || s === 8) { DRUMS[0].play(t, 0.5); setTimeout(() => flash(0, C.white, 120), ms); }
+    if (s === 4 || s === 12) { DRUMS[1].play(t, 0.4); setTimeout(() => flash(1, C.white, 120), ms); }
+    if (s % 2 === 0) DRUMS[2].play(t, s % 4 ? 0.25 : 0.4);
+    seq.step = (s + 1) % 16;
+    seq.next += stepDur;
+  }
+}
+
+// ─── Lumières des pads (SysEx MiniLab mkII) ──────────────────────────────────
+const led = { sent: new Array(16).fill(-1), flash: new Array(16).fill(null), bar: null };
+
+function flash(i, color, ms) { led.flash[i] = { color, until: performance.now() + ms }; }
+
+function showBar(param) {
+  const p = PARAMS[param];
+  led.bar = { n: Math.round(p.value * 8), color: p.color, until: performance.now() + 1200 };
+}
+
+function sendPad(i, color) {
+  if (!ledOut || !sysexOK) return false;
+  try { ledOut.send([0xF0, 0x00, 0x20, 0x6B, 0x7F, 0x42, 0x02, 0x00, 0x10, 0x70 + i, color, 0xF7]); return true; }
+  catch { return false; }
+}
+
+function padColor(i, now) {
+  if (sleeping) return C.off;
+  let c;
+  if (i < 8) {
+    c = DRUMS[i].color;
+    if (now - lastActivity > ATTRACT_AFTER_MS) {           // chenillard pour inviter à jouer
+      const k = Math.floor(now / 350);
+      c = (k % 8 === i) ? RAINBOW[Math.floor(k / 8) % RAINBOW.length] : C.off;
+    }
+  } else if (i === MAGIC_PAD) {
+    c = magic ? C.white : C.off;
+  } else if (i - 8 < INSTRUMENTS.length) {
+    c = INSTRUMENTS[i - 8].color;
+    if (i - 8 === instr && Math.floor(now / 400) % 2) c = C.off; // l'instrument choisi clignote
+  } else c = C.off;
+  const f = led.flash[i];
+  if (f && f.until > now) c = f.color;
+  if (led.bar && led.bar.until > now) c = (i % 8) < led.bar.n ? led.bar.color : C.off;
+  return c;
+}
+
+function renderLeds() {
+  const now = performance.now();
+  for (let i = 0; i < 16; i++) {
+    const c = padColor(i, now);
+    if (c !== led.sent[i] && sendPad(i, c)) led.sent[i] = c;
+  }
+}
+
+// ─── MIDI ────────────────────────────────────────────────────────────────────
+function onKnob(key, value) {
+  if (!(key in knobMap)) { knobMap[key] = Object.keys(knobMap).length % PARAMS.length; store.set('knobs', knobMap); }
+  const slot = knobMap[key], p = PARAMS[slot];
+  // Auto-détection : mode absolu (0-127) ou relatif Arturia (64 ± n)
+  if (value < 56 || value > 72) knobMode[key] = 'abs';
+  if (knobMode[key] === 'abs') p.value = value / 127;
+  else p.value = Math.max(0, Math.min(1, p.value + (value - 64) * 0.02));
+  applyParams();
+  showBar(slot);
+}
+
+function onMidi(e) {
+  const [st, d1, d2 = 0] = e.data;
+  if (st >= 0xF0) return; // horloge, sysex…
+  wake();
+  const type = st & 0xF0, ch = st & 0x0F;
+  const isPad = ch === PAD_CHANNEL && d1 >= PAD_FIRST_NOTE && d1 < PAD_FIRST_NOTE + 16;
+  if (type === 0x90 && d2 > 0) {
+    if (isPad) padOn(d1 - PAD_FIRST_NOTE, d2); else keyOn(d1, d2);
+  } else if (type === 0x80 || type === 0x90) {
+    if (!isPad) keyOff(d1);
+  } else if (type === 0xB0) {
+    if (d1 === 1) { modWheel = d2 / 127; applyParams(); }               // bande « mod »
+    else if (d1 === 64) {                                                // pédale de sustain
+      sustain = d2 >= 64;
+      if (!sustain) { const rel = INSTRUMENTS[instr].r; sustained.forEach(v => releaseVoice(v, rel)); sustained.clear(); }
+    } else if (d1 < 120 && !(d1 >= 65 && d1 <= 69)) onKnob(ch + ':' + d1, d2);
+  } else if (type === 0xE0) {                                            // bande « pitch »
+    const bend = ((d2 << 7) | d1) - 8192;
+    detuneSrc.offset.setTargetAtTime(bend / 8192 * 700, ctx.currentTime, 0.01);
+  }
+}
+
+function bindMidi() {
+  if (!midiAccess) return;
+  ledOut = null;
+  for (const out of midiAccess.outputs.values()) if (/minilab/i.test(out.name || '')) ledOut = out;
+  for (const inp of midiAccess.inputs.values()) inp.onmidimessage = onMidi;
+  led.sent.fill(-1); // forcer le renvoi des couleurs (MiniLab rebranché)
+  document.getElementById('dot').classList.toggle('ok', midiAccess.inputs.size > 0);
+}
+
+async function initMidi() {
+  if (!navigator.requestMIDIAccess) return;
+  try { midiAccess = await navigator.requestMIDIAccess({ sysex: true }); sysexOK = true; }
+  catch { try { midiAccess = await navigator.requestMIDIAccess(); } catch { return; } }
+  midiAccess.onstatechange = bindMidi;
+  bindMidi();
+}
+
+// ─── Veille ──────────────────────────────────────────────────────────────────
+function wake() {
+  lastActivity = performance.now();
+  if (!sleeping) return;
+  sleeping = false;
+  ctx.resume();
+  [60, 64, 67].forEach((n, k) => setTimeout(() => playVoice(INSTRUMENTS[3], n + 12, 80), 150 + k * 120));
+}
+function checkSleep() {
+  if (!sleeping && ctx && performance.now() - lastActivity > SLEEP_AFTER_MS) {
+    sleeping = true;
+    PARAMS[P.RHYTHM].value = 0;
+    setTimeout(() => { if (sleeping) ctx.suspend(); }, 500);
+  }
+}
+
+// ─── Clavier d'ordinateur (pour tester sans MiniLab) ─────────────────────────
+const KEYS = ['KeyA', 'KeyW', 'KeyS', 'KeyE', 'KeyD', 'KeyF', 'KeyT', 'KeyG', 'KeyY', 'KeyH', 'KeyU', 'KeyJ', 'KeyK'];
+const fake = (data) => onMidi({ data });
+addEventListener('keydown', e => {
+  if (!ctx || e.repeat) return;
+  const k = KEYS.indexOf(e.code);
+  if (k >= 0) fake([0x90, 60 + k, 100]);
+  const m = /^Digit([1-8])$/.exec(e.code);
+  if (m) fake([0x90 | PAD_CHANNEL, PAD_FIRST_NOTE + (+m[1] - 1) + (e.shiftKey ? 8 : 0), 100]);
+});
+addEventListener('keyup', e => {
+  const k = KEYS.indexOf(e.code);
+  if (ctx && k >= 0) fake([0x80, 60 + k, 0]);
+});
+
+// ─── Écran : noir, sauf infos parent après 5 tapes rapides ───────────────────
+let wakeLock = null;
+async function keepAwake() {
+  try { if (navigator.wakeLock && document.visibilityState === 'visible') wakeLock = await navigator.wakeLock.request('screen'); } catch {}
+}
+document.addEventListener('visibilitychange', keepAwake);
+
+let taps = [];
+function onTap() {
+  const now = performance.now();
+  taps = taps.filter(t => now - t < 2000).concat(now);
+  if (taps.length < 5) return;
+  taps = [];
+  const ins = midiAccess ? [...midiAccess.inputs.values()].map(i => i.name).join(', ') || '—' : 'Web MIDI indisponible';
+  document.getElementById('infotext').textContent =
+    `Entrées MIDI : ${ins}\nLumières : ${ledOut ? ledOut.name : 'MiniLab introuvable'}${sysexOK ? '' : ' (SysEx refusé)'}\n` +
+    `Instrument : ${INSTRUMENTS[instr].name} · Gamme magique : ${magic ? 'oui' : 'non'}\n` +
+    `Potards appris : ${Object.keys(knobMap).length}\n` +
+    PARAMS.map(p => `${p.name} ${Math.round(p.value * 100)}%`).join(' · ');
+  const box = document.getElementById('info');
+  box.style.display = 'block';
+  clearTimeout(onTap.timer);
+  onTap.timer = setTimeout(() => { box.style.display = 'none'; }, 8000);
+}
+document.getElementById('reset').addEventListener('click', e => {
+  e.stopPropagation();
+  knobMap = {}; store.set('knobs', knobMap);
+  document.getElementById('info').style.display = 'none';
+});
+
+document.getElementById('start').addEventListener('click', async () => {
+  document.getElementById('start').remove();
+  initAudio();
+  try { await document.documentElement.requestFullscreen?.(); } catch {}
+  keepAwake();
+  await initMidi();
+  setInterval(renderLeds, 40);
+  setInterval(checkSleep, 5000);
+  document.addEventListener('pointerdown', onTap);
+  wake();
+  [60, 64, 67, 72].forEach((n, k) => setTimeout(() => playVoice(INSTRUMENTS[3], n + 12, 80), k * 120));
+});
+
+addEventListener('pagehide', () => { for (let i = 0; i < 16; i++) sendPad(i, C.off); });
+
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
