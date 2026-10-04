@@ -29,20 +29,26 @@ Régler le volume max sur l'enceinte : l'appli a déjà un limiteur, mais c'est 
 
 ## Comment on joue
 
-**La musique** — les pads allument et éteignent les instruments d'un morceau, comme un groupe de musiciens :
+**La musique** — les pads sont les musiciens du morceau. **Allumé = il joue, éteint = il se tait.**
 
-| Pad | | Effet |
+| Pad | | |
 |---|---|---|
-| 1 | 🥁 Batterie | allumé rouge = joue, éteint = se tait |
+| 1 | 🥁 Batterie | rouge |
 | 2 | 🪇 Percus | jaune — claps, shakers, bongos, cloches… |
 | 3 | 🎸 Basse | vert |
 | 4 | 🎹 Accords | bleu |
 | 5 | 🎵 Mélodie | blanc — la chanson |
 | 6 | ✨ Ambiance | cyan — nappe de violons, arpège… |
-| 7 | 🌈 Tonalité | monte la musique d'un cran (do → ré → mi → fa → sol → la → do…), à la mesure suivante. Une couleur par tonalité ; le clavier suit (gamme magique) |
-| 8 | ⏯️ Tout / rien | lance tout le morceau, ou coupe tout. Clignote vert quand c'est arrêté |
+| 7 | 🌈 Tonalité | monte la musique d'un cran (do → ré → mi → fa → sol → la → do…) à la mesure suivante ; une couleur par tonalité, le clavier suit |
+| 8 | ⏯️ Tout / rien | vert = appuie pour lancer tout le morceau ; blanc = ça joue, appuie pour tout couper |
 
-Chaque pad allumé clignote au rythme de son instrument. La 2ᵉ banque de pads fait exactement la même chose.
+- **Appui court** sur un pad 1-6 : allume / éteint l'instrument.
+- **Maintenir** le pad : effet « wouah-wouah » + écho sur cet instrument tant qu'on appuie (le pad clignote ;
+  appuyer plus fort renforce l'effet). On lâche, l'effet s'arrête.
+- **Maintenir le pad + tourner n'importe quel potard** : volume de cet instrument (jauge lumineuse de sa couleur).
+  Il est mémorisé.
+
+La 2ᵉ banque de pads fait exactement la même chose.
 
 **Les thèmes** (tourner le potard 9) : 9 chansons du domaine public, chacune dans un style.
 **Clic sur le potard 9** = autre mélodie (passe à l'autre partie de la chanson, à la mesure suivante).
@@ -62,7 +68,7 @@ Chaque pad allumé clignote au rythme de son instrument. La 2ᵉ banque de pads 
 **Le clavier** joue par-dessus, toujours juste grâce à la « gamme magique » (do pentatonique, comme tous les thèmes).
 **Clic sur le potard 1** = instrument suivant : piano, piano électrique, marimba, guitare, trompette, flûte, violons,
 chorale, steel drum, bruitages (oiseau, téléphone, applaudissements, hélicoptère, vagues…).
-Les boutons *Octave − / +* du MiniLab changent l'octave du clavier. Sur le MiniLab mkII ils n'envoient a priori rien
+Le volume du clavier se règle avec le **potard 2**. Les boutons *Octave − / +* du MiniLab changent l'octave du clavier. Sur le MiniLab mkII ils n'envoient a priori rien
 à l'appli ; s'ils envoient quelque chose, l'apprentissage guidé les utilise pour changer la tonalité (− / +).
 
 Tous les sons sont de vrais instruments enregistrés (banque FluidR3 GM) et de vraies batteries.
@@ -99,10 +105,16 @@ le panneau parent affiche les derniers messages MIDI reçus.
 - Arrêtée et sans jeu pendant **45 s** : chenillard de couleurs pour inviter à jouer.
 - Après **10 min** sans jeu : tout s'éteint (musique, lumières). Toucher n'importe quoi réveille avec un petit carillon.
 - **Panneau parent** (5 tapes sur l'écran) : appareils détectés, thème et couches en cours, derniers messages MIDI,
-  boutons « Apprendre les potards », « Gamme magique » on/off, « Test son ».
+  boutons « Apprendre les potards », « Gamme magique » on/off, « Test son », « Latence ».
 - Hors-ligne : après la première utilisation avec Internet, tous les sons sont gardés sur la tablette.
 - Pour tester sans MiniLab sur un ordinateur : `A W S E D F T G Y H U J K` = clavier, `1`-`8` = pads,
   `N` = instrument suivant, `M` = autre mélodie, `,` / `.` = tonalité − / +.
+
+## Si le son arrive en retard
+
+- Panneau parent → bouton **Latence** : « faible » (par défaut) ou « normale ». La ligne « Son » affiche la latence mesurée.
+- **Enceinte en Bluetooth = gros retard** (souvent 150 à 300 ms), quoi qu'on fasse dans l'appli :
+  préférer le **câble jack** vers l'entrée AUX.
 
 ## Si le son grésille
 
@@ -110,8 +122,8 @@ L'appli garde de la marge (le son sort volontairement un peu moins fort) : **mon
 
 - **Grésillement quand on joue beaucoup** : volume de la tablette vers 70-80 %, volume de l'enceinte plus haut.
   Une sortie casque de tablette poussée à fond sature souvent l'entrée AUX d'une chaîne hi-fi.
-- **Craquements irréguliers** : la tablette n'arrive pas à suivre. Fermer les autres applis, éviter le mode économie d'énergie.
-  Dans `js/app.js`, `LATENCY = 'playback'` donne encore plus de marge (un peu plus de délai entre la touche et le son).
+- **Craquements irréguliers** : la tablette n'arrive pas à suivre. Fermer les autres applis, éviter le mode économie d'énergie,
+  et passer la **latence en « normale »** dans le panneau parent (un peu plus de délai entre la touche et le son).
 - **Bourdonnement ou souffle permanent, même sans jouer** : souvent une boucle de masse (tablette en charge + MiniLab
   en USB + câble vers la hi-fi). Essayer tablette sur batterie, une autre prise, ou un isolateur jack (« ground loop isolator », ~10 €).
 - **Ça grésille seulement avec le potard 🐯 Grrr** : c'est normal, c'est la distorsion.

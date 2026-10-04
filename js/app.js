@@ -4,7 +4,9 @@
 const PAD_CHANNEL = 9;          // canal 10 (0-indexé) : canal d'usine des pads du MiniLab mkII
 const PAD_FIRST_NOTE = 36;      // pads 1-8 → notes 36-43 (la 2e banque, 44-51, fait la même chose)
 const MAX_VOICES = 10;          // notes simultanées du clavier
-const LATENCY = 'balanced';     // 'interactive' = plus réactif mais peut grésiller sur une petite tablette
+// Latence audio : 'interactive' = le son part tout de suite ; 'balanced' = plus de marge si ça grésille.
+// Se change dans le panneau parent (bouton « Latence »).
+const LATENCY = (() => { try { return localStorage.getItem('kidmidi.latency') === 'normale' ? 'balanced' : 'interactive'; } catch { return 'interactive'; } })();
 const MASTER_LEVEL = 0.8;
 const ATTRACT_AFTER_MS = 45 * 1000;    // chenillard lumineux après 45 s sans jeu
 const SLEEP_AFTER_MS = 10 * 60 * 1000; // dodo (lumières éteintes, son en pause) après 10 min
@@ -16,6 +18,7 @@ const RAINBOW = [C.red, C.yellow, C.green, C.cyan, C.blue, C.magenta, C.white];
 const PAD_KEY = 6, PAD_PLAY = 7;
 // Tonalités proposées (en demi-tons au-dessus de do) : do, ré, mi, fa, sol, la
 const KEYS = [0, 2, 4, 5, 7, -3], KEY_NAMES = ['do', 'ré', 'mi', 'fa', 'sol', 'la'];
+const KEY_COLORS = [C.magenta, C.cyan, C.yellow, C.green, C.blue, C.white];
 
 const store = {
   get(k, d) { try { const v = localStorage.getItem('kidmidi.' + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -62,7 +65,7 @@ const knobMode = {};                     // "canal:cc" → { mode, sure, last } 
 const clickState = {};
 let learn = null;                        // { next, seen } pendant l'apprentissage guidé
 
-let ctx, master, kidIn, kidVol, drumBus, musicBus, shaper, filter, delayFb, delaySend, revSend, detuneSrc, lfo, lfoGain, noiseBuf;
+let ctx, master, kidIn, kidVol, drumBus, musicBus, drumDest, layerFx = [], shaper, filter, delayFb, delaySend, revSend, detuneSrc, lfo, lfoGain, noiseBuf;
 let midiAccess = null, ledOut = null, sysexOK = false;
 let sustain = false, modWheel = 0, lastGrr = -1;
 let lastActivity = performance.now(), sleeping = false;
@@ -164,6 +167,23 @@ function initAudio() {
   const musicRev = ctx.createGain(); musicRev.gain.value = 0.18;
   musicBus.connect(musicRev).connect(conv);
   drumBus = ctx.createGain(); drumBus.connect(master);
+
+  // Une entrée par couche : volume de la couche → filtre d'effet → batterie ou musique.
+  // Maintenir un pad = filtre qui fait « wouah-wouah » + écho sur cette couche.
+  const dub = ctx.createDelay(1); dub.delayTime.value = 0.28;
+  const dubFb = ctx.createGain(); dubFb.gain.value = 0.45;
+  dub.connect(dubFb).connect(dub); dub.connect(master);
+  const wobble = ctx.createOscillator(); wobble.frequency.value = 2.5; wobble.start();
+  layerFx = LAYERS.map((L, i) => {
+    const vol = ctx.createGain(); vol.gain.value = layerVol[i];
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 20000; f.Q.value = 1;
+    const depth = ctx.createGain(); depth.gain.value = 0;
+    wobble.connect(depth).connect(f.frequency);
+    const echo = ctx.createGain(); echo.gain.value = 0;
+    vol.connect(f).connect(i < 2 ? drumBus : musicBus);
+    f.connect(echo).connect(dub);
+    return { in: vol, vol, f, depth, echo };
+  });
 
   // Pitch bend + vibrato partagés par toutes les voix du clavier (branchés sur .detune)
   detuneSrc = ctx.createConstantSource(); detuneSrc.offset.value = 0; detuneSrc.start();
@@ -320,19 +340,19 @@ function biquad(type, f, q = 1) {
 }
 function synthNoise(t, a, filt, decay, peak) {
   const g = ctx.createGain(); envExp(g, t, peak * a, decay);
-  noise(t, decay).connect(filt).connect(g).connect(drumBus);
+  noise(t, decay).connect(filt).connect(g).connect(drumDest);
 }
 const KIT_SLOT = { kick: 0, snare: 1, hat: 2, tom1: 3, tom2: 4, tom3: 5 };
 const DRUM_VOICES = {
-  kick:  (t, a, th) => playSample('kit-' + th.kit, 0, 127, t, drumBus, { slot: KIT_SLOT.kick, level: a }),
-  snare: (t, a, th) => playSample('kit-' + th.kit, 0, 127, t, drumBus, { slot: KIT_SLOT.snare, level: 0.8 * a }),
-  hat:   (t, a, th) => playSample('kit-' + th.kit, 0, 127, t, drumBus, { slot: KIT_SLOT.hat, level: 0.4 * a }),
-  tom1:  (t, a, th) => playSample('kit-' + th.kit, 0, 127, t, drumBus, { slot: KIT_SLOT.tom1, level: 0.7 * a }),
-  tom2:  (t, a, th) => playSample('kit-' + th.kit, 0, 127, t, drumBus, { slot: KIT_SLOT.tom2, level: 0.7 * a }),
-  bongo1: (t, a) => playSample('kit-Bongos', 0, 127, t, drumBus, { slot: KIT_SLOT.tom1, level: 0.35 * a }),
-  bongo2: (t, a) => playSample('kit-Bongos', 0, 127, t, drumBus, { slot: KIT_SLOT.tom2, level: 0.35 * a }),
-  wood:    (t, a) => playSample('perc', 0, 127, t, drumBus, { slot: 0, level: 0.3 * a }),
-  cowbell: (t, a) => playSample('perc', 0, 127, t, drumBus, { slot: 1, level: 0.2 * a }),
+  kick:  (t, a, th) => playSample('kit-' + th.kit, 0, 127, t, drumDest, { slot: KIT_SLOT.kick, level: a }),
+  snare: (t, a, th) => playSample('kit-' + th.kit, 0, 127, t, drumDest, { slot: KIT_SLOT.snare, level: 0.8 * a }),
+  hat:   (t, a, th) => playSample('kit-' + th.kit, 0, 127, t, drumDest, { slot: KIT_SLOT.hat, level: 0.4 * a }),
+  tom1:  (t, a, th) => playSample('kit-' + th.kit, 0, 127, t, drumDest, { slot: KIT_SLOT.tom1, level: 0.7 * a }),
+  tom2:  (t, a, th) => playSample('kit-' + th.kit, 0, 127, t, drumDest, { slot: KIT_SLOT.tom2, level: 0.7 * a }),
+  bongo1: (t, a) => playSample('kit-Bongos', 0, 127, t, drumDest, { slot: KIT_SLOT.tom1, level: 0.35 * a }),
+  bongo2: (t, a) => playSample('kit-Bongos', 0, 127, t, drumDest, { slot: KIT_SLOT.tom2, level: 0.35 * a }),
+  wood:    (t, a) => playSample('perc', 0, 127, t, drumDest, { slot: 0, level: 0.3 * a }),
+  cowbell: (t, a) => playSample('perc', 0, 127, t, drumDest, { slot: 1, level: 0.2 * a }),
   open:     (t, a) => synthNoise(t, a, biquad('highpass', 7000), 0.3, 0.35),
   shaker:   (t, a) => synthNoise(t, a, biquad('highpass', 6000), 0.06, 0.55),
   tamb:     (t, a) => { synthNoise(t, a, biquad('bandpass', 9000, 2), 0.15, 1.0); synthNoise(t + 0.02, a, biquad('bandpass', 7000, 2), 0.12, 0.4); },
@@ -345,13 +365,13 @@ const DRUM_VOICES = {
       g.gain.setValueAtTime(1.6 * a, tt); g.gain.exponentialRampToValueAtTime(0.05, tt + 0.01);
     }
     g.gain.setValueAtTime(1.3 * a, t + 0.033); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
-    noise(t, 0.3).connect(biquad('bandpass', 1200, 1.4)).connect(g).connect(drumBus);
+    noise(t, 0.3).connect(biquad('bandpass', 1200, 1.4)).connect(g).connect(drumDest);
   },
   triangle: (t, a) => {
     for (const [f, lvl] of [[2600, 0.12], [7100, 0.06]]) {
       const o = ctx.createOscillator(), g = ctx.createGain();
       o.frequency.value = f; envExp(g, t, lvl * a, 1.4);
-      o.connect(g).connect(drumBus); o.start(t); o.stop(t + 1.5);
+      o.connect(g).connect(drumDest); o.start(t); o.stop(t + 1.5);
     }
   },
 };
@@ -441,6 +461,7 @@ function themeBanks(th) {
 }
 
 const layersOn = [false, false, false, false, false, false];
+const layerVol = store.get('layerVol', [1, 1, 1, 1, 1, 1]); // volume de chaque couche (pad maintenu + potard)
 const LAYER_GAIN = { bass: 1, chords: 1.8, melody: 2, ambiance: 1.4 }; // équilibre mesuré entre couches
 const seq = { running: false, step: 0, partStep: 0, part: 0, pendingPart: null, key: 0, pendingKey: null, next: 0 };
 const transposed = c => ({ root: (c.root + KEYS[seq.key] + 12) % 12, iv: c.iv });
@@ -500,30 +521,27 @@ function changeKey(dir) {
   }
 }
 
-function flashLater(i, ms, color = C.white) {
-  setTimeout(() => flash(i, color, 90), ms);
-}
-
 function playStep(th, t, ms, stepDur) {
   const part = th.parsedParts[seq.part];
   const ps = seq.partStep % part.len, bp = ps % th.bar;
   const chord = transposed(part.chordAt[ps]);
   const S = (i) => layersOn[i];
 
+  drumDest = layerFx[0].in;
   if (S(0)) for (const [v, pat] of Object.entries(th.drumPats)) {
     const e = pat[seq.step % pat.length];
-    if (e) { DRUM_VOICES[v](t, e.vel, th); if (v === 'kick' || v === 'snare') flashLater(0, ms, hitColor(0)); }
+    if (e) DRUM_VOICES[v](t, e.vel, th);
   }
+  drumDest = layerFx[1].in;
   if (S(1)) for (const [v, pat] of Object.entries(th.percPats)) {
     const e = pat[seq.step % pat.length];
-    if (e) { DRUM_VOICES[v](t, e.vel, th); if (e.vel > 0.5) flashLater(1, ms, hitColor(1)); }
+    if (e) DRUM_VOICES[v](t, e.vel, th);
   }
   if (S(2)) {
     const e = th.bass.pat[bp];
     if (e) {
-      playSample(th.bass.inst, bassNote(chord, e.ch), 110, t, musicBus,
+      playSample(th.bass.inst, bassNote(chord, e.ch), 110, t, layerFx[2].in,
         { level: (th.bass.level ?? 0.75) * LAYER_GAIN.bass, dur: e.dur * stepDur * 0.95, release: 0.08 });
-      flashLater(2, ms, hitColor(2));
     }
   }
   if (S(3)) playHarmony(th.chords, 3, LAYER_GAIN.chords, part, ps, bp, chord, t, ms, stepDur);
@@ -531,33 +549,29 @@ function playStep(th, t, ms, stepDur) {
   if (S(4)) {
     const e = part.melAt[ps];
     if (e) {
-      playSample(th.melody.inst, e.note + KEYS[seq.key], 110, t, musicBus,
+      playSample(th.melody.inst, e.note + KEYS[seq.key], 110, t, layerFx[4].in,
         { level: (th.melody.level ?? 0.6) * LAYER_GAIN.melody, dur: e.dur * stepDur * 0.92, release: 0.15 });
-      flashLater(4, ms, hitColor(4));
     }
   }
 }
 
 function playHarmony(L, layer, gainMul, part, ps, bp, chord, t, ms, stepDur) {
-  const lvl = (L.level ?? 0.4) * gainMul;
+  const lvl = (L.level ?? 0.4) * gainMul, dest = layerFx[layer].in;
   if (L.mode === 'pad') {
     const s = part.chordStart[ps];
     if (!s) return;
-    for (const n of voicing(transposed(s.chord), L.low)) playSample(L.inst, n, 90, t, musicBus,
+    for (const n of voicing(transposed(s.chord), L.low)) playSample(L.inst, n, 90, t, dest,
       { level: lvl, dur: s.dur * stepDur, release: 0.4, attack: 0.08 });
-    flashLater(layer, ms, hitColor(layer));
   } else if (L.mode === 'arp') {
     const d = L.pat[bp % L.pat.length];
     if (d === '.' || d === undefined) return;
     const vs = voicing(chord, L.low), all = vs.concat(vs.map(n => n + 12));
-    playSample(L.inst, all[+d % all.length], 95, t, musicBus, { level: lvl, dur: stepDur * 2.5, release: 0.3 });
-    flashLater(layer, ms, hitColor(layer));
+    playSample(L.inst, all[+d % all.length], 95, t, dest, { level: lvl, dur: stepDur * 2.5, release: 0.3 });
   } else {
     const e = L.pat[bp % L.pat.length];
     if (!e) return;
-    for (const n of voicing(chord, L.low)) playSample(L.inst, n, 100, t, musicBus,
+    for (const n of voicing(chord, L.low)) playSample(L.inst, n, 100, t, dest,
       { level: lvl * e.vel, dur: e.dur * stepDur * 0.9, release: 0.1 });
-    flashLater(layer, ms, hitColor(layer));
   }
 }
 
@@ -585,7 +599,6 @@ function seqTick() {
     const swing = (seq.step % 2) ? (th.swing || 0) * stepDur : 0;
     const t = seq.next + swing, ms = Math.max(0, (t - ctx.currentTime) * 1000);
     if (music) playStep(th, t, ms, stepDur);
-    if (music && seq.step % 4 === 0) flashLater(PAD_PLAY, ms, C.white);
     playArpStep(t, ms, stepDur);
     seq.step++;
     seq.partStep++;
@@ -594,11 +607,9 @@ function seqTick() {
 }
 
 // ─── Lumières des pads (SysEx MiniLab mkII) ──────────────────────────────────
-const led = { sent: new Array(16).fill(-1), flash: new Array(8).fill(null), bar: null };
+const led = { sent: new Array(16).fill(-1), bar: null };
 const layerColor = i => C[LAYERS[i].color];
-const hitColor = i => layerColor(i) === C.white ? C.off : C.white;
 
-function flash(i, color, ms) { led.flash[i] = { color, until: performance.now() + ms }; }
 
 // Jauge lumineuse quand on tourne un potard
 function showBar(pi) {
@@ -622,34 +633,68 @@ function padColor(i, now) {
   if (learn) return i <= (learn.next % 8) ? (learn.next < 8 ? C.green : learn.next < 16 ? C.blue : C.magenta) : C.off;
   if (led.bar && led.bar.until > now) return i < led.bar.n ? led.bar.color : C.off;
   const playing = layersOn.some(Boolean);
-  const blink = Math.floor(now / 500) % 2 === 0;
-  if (!playing && now - lastActivity > ATTRACT_AFTER_MS) {         // chenillard pour inviter à jouer
+  if (!playing && !hold && now - lastActivity > ATTRACT_AFTER_MS) {  // chenillard pour inviter à jouer
     const k = Math.floor(now / 350);
     return (k % 8 === i) ? RAINBOW[Math.floor(k / 8) % RAINBOW.length] : C.off;
   }
-  let c;
-  if (i < LAYERS.length) c = layersOn[i] ? layerColor(i) : C.off;
-  else if (i === PAD_KEY) {
-    c = RAINBOW[seq.pendingKey ?? seq.key];                         // une couleur par tonalité
-    if (seq.pendingKey !== null && blink) c = C.off;               // clignote jusqu'à la mesure suivante
-  } else c = playing ? C.green : (blink ? C.green : C.off);         // lecture : vert ; arrêt : vert qui clignote
-  const f = led.flash[i];
-  if (f && f.until > now) c = f.color;
-  return c;
+  if (i < LAYERS.length) {
+    if (hold && hold.i === i && hold.active) return Math.floor(now / 150) % 2 ? layerColor(i) : C.off; // effet en cours
+    return layersOn[i] ? layerColor(i) : C.off;                     // allumé = joue, éteint = se tait
+  }
+  if (i === PAD_KEY) return KEY_COLORS[seq.pendingKey ?? seq.key];   // une couleur par tonalité
+  return playing ? C.white : C.green;                               // ⏯ : vert = appuie pour jouer, blanc = ça joue
 }
 
+let ledRefresh = 0;
 function renderLeds() {
   const now = performance.now();
+  // Le MiniLab allume parfois lui-même un pad quand on le tape : on renvoie tout régulièrement
+  if (now - ledRefresh > 1000) { ledRefresh = now; led.sent.fill(-1); }
   for (let i = 0; i < 16; i++) {
     const c = padColor(i % 8, now);   // les deux banques de pads affichent la même chose
     if (c !== led.sent[i] && sendPad(i, c)) led.sent[i] = c;
   }
 }
 
-function padOn(i) {
-  if (i < LAYERS.length) toggleLayer(i);
-  else if (i === PAD_KEY) changeKey(+1);
-  else togglePlay();
+// ─── Pads : appui court = allumer/éteindre ; maintenir = effet ; maintenir + potard = volume ──
+let hold = null;   // { i, wasOn, active, timer, usedKnob }
+const HOLD_MS = 350;
+
+function padDown(i) {
+  if (i >= LAYERS.length) { if (i === PAD_KEY) changeKey(+1); else togglePlay(); return; }
+  if (hold) padUp(hold.i);
+  const wasOn = layersOn[i];
+  if (!wasOn) { layersOn[i] = true; startClock(); }               // allumer = tout de suite
+  hold = { i, wasOn, active: false, usedKnob: false };
+  hold.timer = setTimeout(() => { if (hold && hold.i === i) { hold.active = true; setEffect(i, 1); } }, HOLD_MS);
+}
+
+function padUp(i) {
+  if (!hold || hold.i !== i) return;
+  clearTimeout(hold.timer);
+  if (hold.active) setEffect(i, 0);
+  else if (hold.wasOn && !hold.usedKnob) layersOn[i] = false;   // appui court sur une couche allumée = éteindre
+  if (hold.usedKnob) store.set('layerVol', layerVol);
+  hold = null;
+  led.sent.fill(-1);
+}
+
+// Effet « wouah-wouah » + écho sur une couche (amount 0 = rien, 1 = à fond ; la pression du pad le dose)
+function setEffect(i, amount) {
+  const fx = layerFx[i];
+  if (!fx) return;
+  const t = ctx.currentTime;
+  fx.f.frequency.cancelScheduledValues(t);
+  fx.f.frequency.setTargetAtTime(amount ? 900 : 20000, t, 0.05);
+  fx.f.Q.setTargetAtTime(amount ? 4 + 8 * amount : 1, t, 0.05);
+  fx.depth.gain.setTargetAtTime(amount ? 700 * amount : 0, t, 0.05);
+  fx.echo.gain.setTargetAtTime(amount ? 0.6 : 0, t, 0.05);
+}
+
+function setLayerVolume(i, v) {
+  layerVol[i] = Math.max(0, Math.min(1.5, v));
+  layerFx[i].vol.gain.setTargetAtTime(layerVol[i], ctx.currentTime, 0.03);
+  led.bar = { n: Math.round(layerVol[i] / 1.5 * 8), color: layerColor(i), until: performance.now() + 1200 };
 }
 
 // ─── Potards ─────────────────────────────────────────────────────────────────
@@ -684,6 +729,13 @@ function onKnob(key, value) {
   }
   const pi = knobMap[key], p = PARAMS[pi];
   const delta = knobDelta(key, value);
+  if (hold) {                                  // pad maintenu + potard = volume de cet instrument
+    clearTimeout(hold.timer);
+    if (hold.active) { hold.active = false; setEffect(hold.i, 0); }
+    hold.usedKnob = true;
+    setLayerVolume(hold.i, delta === null ? value / 127 * 1.5 : layerVol[hold.i] + delta * 0.03);
+    return;
+  }
   if (delta === null) p.value = value / 127;
   else p.value = Math.max(0, Math.min(1, p.value + delta * (p.steps ? 0.035 : 0.02)));
   if (pi === P.INSTR && selIndex(P.INSTR) !== instr) selectInstrument(selIndex(P.INSTR), true);
@@ -757,7 +809,7 @@ function updateLearnBox() {
 // ─── MIDI ────────────────────────────────────────────────────────────────────
 function logMsg(st, d1, d2) {
   const ch = (st & 0x0F) + 1, ty = st & 0xF0;
-  if (ty === 0x80 || (ty === 0x90 && d2 === 0)) return;
+  if (ty === 0x80 || ty === 0xA0 || ty === 0xD0 || (ty === 0x90 && d2 === 0)) return;
   const s = ty === 0x90 ? `note ${d1} (vél. ${d2})` : ty === 0xB0 ? `CC ${d1} = ${d2}` : ty === 0xE0 ? 'pitch' : ty === 0xC0 ? `program ${d1}` : 'statut ' + st.toString(16);
   lastMsgs.unshift(`canal ${ch} : ${s}`);
   lastMsgs.length = Math.min(lastMsgs.length, 6);
@@ -771,9 +823,12 @@ function onMidi(e) {
   const type = st & 0xF0, ch = st & 0x0F;
   const isPad = ch === PAD_CHANNEL && d1 >= PAD_FIRST_NOTE && d1 < PAD_FIRST_NOTE + 16;
   if (type === 0x90 && d2 > 0) {
-    if (isPad) padOn((d1 - PAD_FIRST_NOTE) % 8); else keyOn(d1, d2);
+    if (isPad) padDown((d1 - PAD_FIRST_NOTE) % 8); else keyOn(d1, d2);
   } else if (type === 0x80 || type === 0x90) {
-    if (!isPad) keyOff(d1);
+    if (isPad) padUp((d1 - PAD_FIRST_NOTE) % 8); else keyOff(d1);
+  } else if (type === 0xA0 || type === 0xD0) {                           // pression sur un pad maintenu
+    const pressure = type === 0xA0 ? d2 : d1;
+    if (hold && hold.active) setEffect(hold.i, 0.3 + 0.7 * pressure / 127);
   } else if (type === 0xB0) {
     const key = ch + ':' + d1;
     if (d1 === 1) { modWheel = d2 / 127; applyParams(); }               // bande « mod »
@@ -824,6 +879,7 @@ function wake() {
 function checkSleep() {
   if (!sleeping && !learn && ctx && performance.now() - lastActivity > SLEEP_AFTER_MS) {
     sleeping = true;
+    if (hold) padUp(hold.i);
     layersOn.fill(false);
     PARAMS[P.ARP].value = 0;
     setTimeout(() => { if (sleeping) ctx.suspend(); }, 500);
@@ -850,6 +906,8 @@ addEventListener('keydown', e => {
   if (e.code === 'Period') changeKey(+1);
 });
 addEventListener('keyup', e => {
+  const m = /^Digit([1-8])$/.exec(e.code);
+  if (ctx && m) fake([0x80 | PAD_CHANNEL, PAD_FIRST_NOTE + (+m[1] - 1), 0]);
   const k = PC_KEYS.indexOf(e.code);
   if (ctx && k >= 0) fake([0x80, 60 + k, 0]);
 });
@@ -870,10 +928,11 @@ function renderInfo() {
     `Clavier : ${KID_INSTRUMENTS[instr].name} · Gamme magique : ${magic ? 'oui' : 'non'}\n` +
     `Potards appris : ${Object.keys(knobMap).length}/16 · boutons : ${Object.entries(clickMap).map(([k, a]) => `${k}→${a}`).join(', ') || '—'}` +
     ` (modes : ${Object.values(knobMode).map(k => k.mode || '?').join(' ') || '—'})\n` +
-    `Son : ${ctx ? `${ctx.state} · ${ctx.sampleRate} Hz · latence ${Math.round(((ctx.baseLatency || 0) + (ctx.outputLatency || 0)) * 1000)} ms · ${banks.size} banques` : 'non démarré'}\n` +
+    `Son : ${ctx ? `${ctx.state} · ${ctx.sampleRate} Hz · latence ${LATENCY === 'interactive' ? 'faible' : 'normale'} ${Math.round(((ctx.baseLatency || 0) + (ctx.outputLatency || 0)) * 1000)} ms · ${banks.size} banques` : 'non démarré'}\n` +
     (lastError ? `Erreur : ${lastError}\n` : '') + '\n' +
     `Derniers messages reçus :\n${lastMsgs.join('\n') || '—'}`;
   document.getElementById('magic').textContent = `Gamme magique : ${magic ? 'oui' : 'non'}`;
+  document.getElementById('latency').textContent = `Latence : ${LATENCY === 'interactive' ? 'faible' : 'normale'}`;
   if (performance.now() > infoUntil) hideInfo();
 }
 function showInfo() {
@@ -902,6 +961,10 @@ const button = (id, fn) => document.getElementById(id).addEventListener('pointer
 button('learn', () => { hideInfo(); startLearn(); });
 button('magic', () => { magic = !magic; store.set('magic', magic); infoUntil = performance.now() + 20000; renderInfo(); });
 button('test', () => { ensureRunning(); chime(); });
+button('latency', () => {     // change la latence : il faut recréer le son, donc recharger la page
+  try { localStorage.setItem('kidmidi.latency', LATENCY === 'interactive' ? 'normale' : 'faible'); } catch {}
+  location.reload();
+});
 button('close', hideInfo);
 
 document.getElementById('start').addEventListener('click', async () => {
